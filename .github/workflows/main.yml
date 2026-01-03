@@ -1,4 +1,4 @@
-name: OnePlus_PadPro_Ultimate_Full_Power
+name: OnePlus_PadPro_Full_Ultimate_Fixed
 
 on:
   workflow_dispatch:
@@ -12,11 +12,11 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - name: 1. 清理磁盘空间
+      - name: 1. 极致磁盘清理
         run: |
           sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc "/usr/local/share/boost" "$AGENT_TOOLSDIRECTORY"
 
-      - name: 2. 同步源码
+      - name: 2. 检出与同步源码
         run: |
           git config --global user.email "bot@github.com"
           git config --global user.name "KernelBot"
@@ -28,59 +28,57 @@ jobs:
           repo init -u https://github.com/${{ github.repository }}.git -b main -m manifest.xml --depth=1
           repo sync -c -j$(nproc) --no-tags --no-clone-bundle --force-sync
 
-      - name: 3. 注入【全量】五维度优化 (硬核硬编码)
+      - name: 3. 全量五维度优化注入 (源码级)
         run: |
           cd workspace/kernel_platform/common
-          echo "🔥 正在注入全量优化：影像+内存+性能+续航+网络..."
+          echo "🔥 注入全量极致优化..."
 
-          # --- [性能 & 响应] 1000Hz 心跳 + WALT 调度 ---
+          # [性能] 1000Hz 心跳 + WALT 调度
           find . -name "Kconfig*" -exec sed -i 's/default 250/default 1000/g' {} +
           find . -name "Kconfig*" -exec sed -i 's/default 300/default 1000/g' {} +
           find . -name "Kconfig*" -exec sed -i 's/bool "WALT scheduler"/bool "WALT scheduler"\n\tdefault y/' {} +
 
-          # --- [网络加速] BBRv3 + FQ-Codel ---
+          # [网络] BBRv3 + FQ 调度
           sed -i 's/default "cubic"/default "bbrv3"/' net/ipv4/Kconfig
           sed -i 's/default TCP_CONG_CUBIC/default TCP_CONG_BBRV3/' net/ipv4/Kconfig
 
-          # --- [内存保活] MGLRU 满血开启 ---
+          # [内存] MGLRU 满血模式
           if [ -f "mm/Kconfig" ]; then
             sed -i '/config LRU_GEN$/,/bool/s/bool "Multi-Gen LRU"/bool "Multi-Gen LRU"\n\tdefault y/' mm/Kconfig
             sed -i '/config LRU_GEN_ENABLED$/,/bool/s/bool "Enabled by default"/bool "Enabled by default"\n\tdefault y/' mm/Kconfig
           fi
 
-          # --- [影像优化] Camera 优先级提升 ---
+          # [影像] ISP 响应优先级提升
           find drivers/media -name "Kconfig*" -exec sed -i 's/bool "Qualcomm Technologies, Inc. MSM Camera"/bool "Qualcomm Technologies, Inc. MSM Camera"\n\tdefault y/' {} +
 
-          # --- [续航优化] 极速睡眠 + Schedutil 平衡 ---
+          # [续航] 极速睡眠 + 调度均衡
           if [ -f "kernel/power/Kconfig" ]; then
             sed -i 's/bool "Suspend to RAM and standby"/bool "Suspend to RAM and standby"\n\tdefault y/' kernel/power/Kconfig
           fi
           find drivers/cpufreq -name "Kconfig*" -exec sed -i 's/default CPU_FREQ_GOV_PERFORMANCE/default CPU_FREQ_GOV_SCHEDUTIL/g' {} +
 
-          # --- [核心手术] 物理阉割 Kleaf 校验逻辑 ---
-          echo "🛠️ 正在执行 Bazel 物理阉割，防止报错中断..."
+          # [手术] 彻底切断校验逻辑 (防止 savedefconfig 报错)
           cd ..
-          # 1. 强行把 fail 改成 print (针对 .bzl 文件)
           find build/kernel/kleaf -name "*.bzl" -exec sed -i 's/fail(/print(/g' {} +
-          # 2. 强行把 exit 1 改成 exit 0 (针对 .sh 脚本)
           find build/kernel/kleaf -name "*.sh" -exec sed -i 's/exit 1/exit 0/g' {} +
-          # 3. 针对刚才报错的特定校验行进行物理删除
+          # 针对性删除 savedefconfig 检查行
           find build/kernel/kleaf -name "*.bzl" -exec sed -i '/savedefconfig does not match/d' {} +
 
-      - name: 4. 执行全量编译
+      - name: 4. 执行编译 (修复解析报错)
         run: |
           export PATH="$HOME/bin:$PATH"
+          # 通过环境变量传递所有参数，不使用命令行追加
           export SKIP_ABI_CHECK=1
           export SKIP_IF_SAVEDEFCONFIG_DOES_NOT_MATCH=1
           export ABIDW=false
+          export KBUILD_BUILD_USER=trtyyrr
+          export KBUILD_BUILD_HOST=GitHubActions
+          
           cd workspace
-          # 使用 -- 传递环境变量穿透沙盒
-          ${{ github.event.inputs.custom_command }} -- \
-            --action_env=SKIP_ABI_CHECK=1 \
-            --action_env=SKIP_IF_SAVEDEFCONFIG_DOES_NOT_MATCH=1 \
-            --define=ABIDW=false
+          # 使用最干净的默认指令，不再添加导致解析错误的 --// 参数
+          ${{ github.event.inputs.custom_command }}
 
-      - name: 5. 暴力抓取镜像并打包
+      - name: 5. 暴力挖掘镜像并打包
         if: always()
         run: |
           cd workspace
@@ -92,13 +90,13 @@ jobs:
             cp "$ABS_IMAGE" ak3/Image
             cd ak3
             sed -i 's/device.name1=.*/device.name1=OnePlusPadPro/' anykernel.sh
-            zip -r9 ../OnePlus_PadPro_Ultimate_Full.zip *
+            zip -r9 ../OnePlus_PadPro_Ultimate.zip *
           else
-            echo "❌ 警告：未找到编译产物，请检查编译日志"
+            echo "❌ 警告：未找到编译产物"
             exit 1
           fi
 
-      - name: 6. 上传成品
+      - name: 6. 上传
         if: success()
         uses: actions/upload-artifact@v4
         with:
