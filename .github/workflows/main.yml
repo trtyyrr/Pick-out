@@ -1,4 +1,4 @@
-name: OnePlus Pad Pro SM8650 Ultimate Overkill V2
+name: OnePlus Pad Pro SM8650 Seven-Dim Insane Overkill
 on:
   workflow_dispatch:
 
@@ -6,7 +6,7 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - name: 🚀 [1] 极致空间清理与 32GB 内存扩容
+      - name: 🚀 [1] 极致清理与磁盘脱水
         run: |
           sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /usr/local/.ghcup /usr/local/share/powershell /usr/share/swift /usr/local/lib/node_modules /opt/az
           sudo apt-get clean && sudo docker image prune -a -f
@@ -17,87 +17,99 @@ jobs:
         run: |
           mkdir -p kernel_workspace/kernel_platform && cd kernel_workspace/kernel_platform
           git config --global url."https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/".insteadOf "https://github.com/"
-          
-          # 核心仓库
           git clone --depth=1 -b oneplus/sm8650_v_15.0.0_pad_pro https://github.com/OnePlusOSS/android_kernel_oneplus_sm8650 msm-kernel
           git clone --depth=1 -b oneplus/sm8650_v_15.0.0_pad_pro https://github.com/OnePlusOSS/android_kernel_common_oneplus_sm8650 common
-          
-          # 构建工具链依赖
           git clone --depth=1 https://git.codelinaro.org/clo/la/kernel_platform/build/bazel_common_rules build/bazel_common_rules
-          git clone --depth=1 https://git.codelinaro.org/clo/la/kernel_platform/external/bazel-skylib external/bazel-skylib
           git clone --depth=1 https://git.codelinaro.org/clo/la/kernel_platform/prebuilts/bazel/linux-x86_64 prebuilts/bazel/linux-x86_64
           git clone --depth=1 https://git.codelinaro.org/clo/la/kernelplatform/prebuilts-master/clang/host/linux-x86 prebuilts/clang/host/linux-x86
-          
           ln -sf msm-kernel/bazel.WORKSPACE WORKSPACE
           ln -sf msm-kernel/build_with_bazel.py build_with_bazel.py
 
-      - name: ☢️ [3] 核心修复：爆破 ABI 校验与签名 (关键！)
+      - name: ☢️ [3] ABI 爆破与环境修复 (前置准备)
         run: |
-          cd $GITHUB_WORKSPACE/kernel_workspace/kernel_platform
-          # 1. 彻底关闭 ABI 监控逻辑
+          cd kernel_workspace/kernel_platform
           find build -name "*.bzl" -exec sed -i 's/abi_definition =/abi_definition = None #/g' {} +
           find build -name "*.bzl" -exec sed -i 's/kmi_symbol_list =/kmi_symbol_list = None #/g' {} +
-          # 2. 强制让 Kleaf 忽略 ABI 差异
-          sed -i 's/CHECK_ABI=1/CHECK_ABI=0/g' build/_setup_env.sh 2>/dev/null || true
-          # 3. 绕过 GKI 模块签名校验
-          find common/init -name "Kconfig" -exec sed -i 's/config MODULE_SIG_ALL/config MODULE_SIG_ALL\n\tdefault n/g' {} +
-          # 4. 移除构建脚本中的强制退出逻辑
-          find build -name "*.sh" -exec sed -i 's/exit 1/exit 0/g' {} +
+          echo "DANGEROUS_SKIP_ABI_CHECK=true" >> $GITHUB_ENV
 
-      - name: ☢️ [4] 七大维度注入 (BBRG + 影像 + 性能)
+      - name: ☢️ [4] 七大维度“狂暴”代码注入 (手动展开，绝不缩减)
         run: |
-          ROOT="$GITHUB_WORKSPACE/kernel_workspace/kernel_platform"
-          cd $ROOT
+          cd kernel_workspace/kernel_platform
+          
+          # 定义需要爆破的目标配置文件 (Defconfigs)
+          GKI_CONFIG="common/arch/arm64/configs/gki_defconfig"
+          VENDOR_CONFIG="msm-kernel/arch/arm64/configs/vendor/pineapple_GKI.config"
 
-          echo "🌐 [维度 1：网络 BBRG 增强]"
-          find . -name "Kconfig" -path "*/net/ipv4/*" -exec sed -i 's/default "cubic"/default "bbrv3"/' {} +
-          find . -name "Kconfig" -path "*/net/core/*" -exec sed -i 's/default "fq_codel"/default "fq"/' {} +
-          find . -name "Kconfig" -path "*/net/ipv4/*" -exec sed -i 's/config TCP_FASTOPEN/config TCP_FASTOPEN\n\tdefault y/' {} +
-          find . -name "Kconfig" -path "*/net/ipv4/*" -exec sed -i 's/config TCP_LOW_LATENCY/config TCP_LOW_LATENCY\n\tdefault y/' {} +
+          echo "🌐 [1. 网络 BBRG]：注入 BBRv3 + FQ + TFO"
+          for cfg in $GKI_CONFIG $VENDOR_CONFIG; do
+            [ -f "$cfg" ] || continue
+            echo "CONFIG_TCP_CONG_BBR=y" >> $cfg
+            echo "CONFIG_TCP_CONG_BBRV3=y" >> $cfg
+            echo "CONFIG_DEFAULT_TCP_CONG=\"bbrv3\"" >> $cfg
+            echo "CONFIG_NET_SCH_FQ=y" >> $cfg
+            echo "CONFIG_DEFAULT_NET_SCH=\"fq\"" >> $cfg
+            echo "CONFIG_TCP_FASTOPEN=y" >> $cfg
+            echo "CONFIG_TCP_LOW_LATENCY=y" >> $cfg
+          done
 
-          echo "📷 [维度 2：影像极致优化]"
-          find . -name "Kconfig*" -path "*/camera/*" -exec sed -i 's/bool "Qualcomm Technologies, Inc. MSM Camera"/bool "Qualcomm Technologies, Inc. MSM Camera"\n\tdefault y/' {} +
-          find . -name "Kconfig*" -path "*/qcom/*" -exec sed -i 's/config MSM_NPU/config MSM_NPU\n\tdefault y/' {} +
+          echo "📷 [2. 影像]：ISP 响应与 NPU 暴力加速"
+          for cfg in $VENDOR_CONFIG; do
+            echo "CONFIG_MSM_CAMERA=y" >> $cfg
+            echo "CONFIG_MSM_NPU=y" >> $cfg
+            echo "CONFIG_MSM_NPU_DEBUG_LEVEL=0" >> $cfg
+            echo "CONFIG_COMMON_CLK_QCOM=y" >> $cfg
+          done
 
-          echo "🧠 [维度 3：内存管理 MGLRU + ZSTD]"
-          find . -name "Kconfig" -path "*/mm/*" -exec sed -i '/config LRU_GEN$/,/bool/s/bool "Multi-Gen LRU"/bool "Multi-Gen LRU"\n\tdefault y/' {} +
-          find . -name "Kconfig" -path "*/zram/*" -exec sed -i 's/config ZRAM_DEF_COMP_LZ4/config ZRAM_DEF_COMP_ZSTD/' {} +
+          echo "🧠 [3. 内存]：MGLRU 满血 + ZSTD + VM 压榨"
+          for cfg in $GKI_CONFIG; do
+            echo "CONFIG_LRU_GEN=y" >> $cfg
+            echo "CONFIG_LRU_GEN_ENABLED=y" >> $cfg
+            echo "CONFIG_ZRAM_DEF_COMP_ZSTD=y" >> $cfg
+          done
+          # 物理爆破 VM 回收逻辑
+          sed -i 's/dirty_background_ratio = 10/dirty_background_ratio = 5/g' common/kernel/sysctl.c
+          sed -i 's/dirty_ratio = 20/dirty_ratio = 10/g' common/kernel/sysctl.c
 
-          echo "🔋 [维度 4：功耗与频率管理]"
-          find . -name "Kconfig*" -path "*/power/*" -exec sed -i 's/config ENERGY_MODEL/config ENERGY_MODEL\n\tdefault y/' {} +
+          echo "🔋 [4. 功耗]：能量模型与 TEO 调速器"
+          echo "CONFIG_ENERGY_MODEL=y" >> $GKI_CONFIG
+          echo "CONFIG_CPU_IDLE_GOV_TEO=y" >> $GKI_CONFIG
 
-          echo "🚀 [维度 5：1000Hz 性能压榨]"
-          find . -name "Kconfig.hz" -exec sed -i 's/default 250/default 1000/g' {} +
+          echo "🚀 [5. 性能]：1000Hz + 完全抢占 + X4 架构压榨"
+          sed -i 's/CONFIG_HZ=250/CONFIG_HZ=1000/g' $GKI_CONFIG
+          sed -i 's/CONFIG_HZ_250=y/CONFIG_HZ_1000=y/g' $GKI_CONFIG
+          echo "CONFIG_PREEMPT=y" >> $GKI_CONFIG
+          # 强制 Makefile 使用 O3 
           find . -name "Makefile" -exec sed -i 's/-O2/-O3/g' {} +
 
-          echo "🎵 [维度 6：音质增强]"
-          find . -name "Kconfig*" -path "*/sound/*" -exec sed -i 's/config SND_SOC_WCD938X/config SND_SOC_WCD938X\n\tdefault y/' {} +
+          echo "🎵 [6. 音质]：WCD938X 低延迟模式"
+          echo "CONFIG_SND_SOC_WCD938X=y" >> $VENDOR_CONFIG
+          echo "CONFIG_SND_SOC_WCD938X_MBHC=y" >> $VENDOR_CONFIG
 
-          echo "✅ 修复与优化共计 200+ 项注入完毕。"
+          echo "🔇 [7. 降噪]：彻底关闭调试日志损耗"
+          echo "CONFIG_SLUB_DEBUG=n" >> $GKI_CONFIG
+          echo "CONFIG_PANIC_ON_OOPS=n" >> $GKI_CONFIG
+          echo "CONFIG_DEBUG_KERNEL=n" >> $GKI_CONFIG
+          sed -i 's/console_loglevel = 7/console_loglevel = 3/g' common/kernel/printk/printk.c
 
       - name: 🔨 [5] 执行巅峰编译 (Bazel SM8650 X4)
         run: |
           cd kernel_workspace/kernel_platform
-          # 明确指定不检查 ABI 且强制通过构建
           python3 build_with_bazel.py -t pineapple_gki \
             --jobs $(nproc) --local_ram_resources=6144 \
             --define=LTO=full \
             --skip_abi_check \
             --copt="-O3" --copt="-mcpu=cortex-x4" --copt="-mtune=cortex-x4" \
-            --copt="-march=armv9-a+crypto+fp16+dotprod" \
-            --verbose_failures
+            --copt="-march=armv9-a+crypto+fp16+dotprod"
 
       - name: 📦 [6] 封包
-        if: success()
         run: |
           IMG=$(find kernel_workspace/out -name "Image" -type f | head -n 1)
           git clone https://github.com/osm0sis/AnyKernel3.git
           cp "$IMG" ./AnyKernel3/
-          cd AnyKernel3 && zip -r9 ../Ultimate_OP_PadPro_SevenDim_Fixed.zip ./*
+          cd AnyKernel3 && zip -r9 ../Ultimate_OP_PadPro_RealInsane.zip ./*
 
       - name: 📤 [7] 发布
-        if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: OnePlus-PadPro-Ultimate-Fixed
+          name: OnePlus-PadPro-Real-Ultimate
           path: ./*.zip
