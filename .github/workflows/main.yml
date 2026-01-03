@@ -12,9 +12,43 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - name: 1. 极致磁盘清理
-        run: |
-          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc "/usr/local/share/boost" "$AGENT_TOOLSDIRECTORY"
+- name: 🚀 极致内存脱水与 30GB 虚拟空间扩容
+  run: |
+    echo "========= 初始状态 ========="
+    free -h && df -h
+
+    # 1. 暴力删除预装环境 (释放约 30GB-40GB 磁盘空间)
+    # 删掉 Android SDK, .NET, Haskell, CodeQL 等大型预装包
+    sudo rm -rf /usr/local/lib/android
+    sudo rm -rf /usr/share/dotnet
+    sudo rm -rf /opt/ghc
+    sudo rm -rf /usr/local/.ghcup
+    sudo rm -rf /usr/local/share/powershell
+    sudo rm -rf /usr/share/swift
+    sudo rm -rf /opt/az
+    sudo rm -rf /usr/local/lib/node_modules
+    
+    # 2. 清理 Docker 镜像和系统缓存
+    sudo docker image prune -a -f
+    sudo apt-get clean
+    
+    # 3. 建立 32GB 的巨型 Swapfile (将磁盘当内存用)
+    # 虽然磁盘速度不如内存，但对于 LTO 链接阶段的符号存储至关重要
+    sudo swapoff -a
+    sudo fallocate -l 32G /swapfile
+    sudo chmod 600 /swapfile
+    sudo mkswap /swapfile
+    sudo swapon /swapfile
+    
+    # 4. 调整内核参数：让系统更积极地使用 Swap
+    sudo sysctl vm.swappiness=100
+    sudo sysctl vm.vfs_cache_pressure=200
+    
+    # 5. 最后的物理内存脱水 (清空 PageCache)
+    sudo sync && echo 3 | sudo tee /proc/sys/vm/drop_caches
+
+    echo "========= 清理后状态 ========="
+    free -h && df -h
 
       - name: 2. 同步源码与安装工具链
         run: |
