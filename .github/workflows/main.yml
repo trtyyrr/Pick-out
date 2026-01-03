@@ -87,6 +87,7 @@ jobs:
             --skip_abl \
             --action_env=SKIP_ABI_CHECK=1 \
             --action_env=SKIP_IF_SAVEDEFCONFIG_DOES_NOT_MATCH=1
+
       - name: 5. 深度挖掘镜像并打包
         run: |
           echo "🔍 正在全量挖掘内核镜像..."
