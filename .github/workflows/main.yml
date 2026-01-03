@@ -1,15 +1,72 @@
-      - name: 同步内核源码 (修正版)
+name: OnePlus Pad Pro Kernel Build
+
+on:
+  workflow_dispatch: # 手动触发
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: 1. 检出清单仓库
+        uses: actions/checkout@v4
+
+      - name: 2. 清理磁盘空间 & 设置 Swap
+        # Bazel 编译 sm8650 非常吃内存，增加 Swap 提高稳定性
+        uses: easimon/maximize-build-space@master
+        with:
+          root-reserve-mb: 16384
+          temp-reserve-mb: 2048
+          remove-dotnet: 'true'
+          remove-android: 'true'
+          remove-haskell: 'true'
+          remove-codeql: 'true'
+
+      - name: 3. 安装依赖工具
         run: |
-          # 配置 Git 用户信息（Repo 必要要求）
-          git config --global user.email "you@example.com"
-          git config --global user.name "Your Name"
-          
+          sudo apt-get update
+          sudo apt-get install -y git git-lfs python3 curl cpio binutils build-essential
+          mkdir -p ~/bin
+          curl https://storage.googleapis.com/git-repo-downloads/repo > ~/bin/repo
+          chmod a+x ~/bin/repo
+          echo "$HOME/bin" >> $GITHUB_PATH
+
+      - name: 4. 配置 Git 用户
+        run: |
+          git config --global user.email "bot@example.com"
+          git config --global user.name "KernelBot"
+
+      - name: 5. 使用 nn.yml 同步源码
+        run: |
           mkdir kernel_workspace && cd kernel_workspace
-          
-          # 1. 显式指定当前目录作为清单仓库 (-u ./)
-          # 2. 显式指定分支名（假设你的 GitHub 默认分支是 main）
-          # 3. 使用 --depth=1 加快速度
-          repo init -u ../ -b ${{ github.ref_name }} -m nn.yml
-          
-          # 同步代码
+          # 动态获取当前分支，防止 refs/heads/main 报错
+          repo init -u ../ -b ${{ github.ref_name }} -m nn.yml --depth=1
+          # 同步代码，-j$(nproc) 使用多线程
           repo sync -c -j$(nproc) --no-tags --force-sync --no-clone-bundle
+
+      - name: 6. 执行 Bazel 编译 (Kleaf)
+        run: |
+          cd kernel_workspace
+          
+          # 第一步：查找正确的 Target 名 (防止指令写错)
+          echo "Checking available targets..."
+          ./tools/bazel query "kind('kernel_build', //msm-kernel/...)"
+          
+          # 第二步：正式编译
+          # 注意：--local_ram_resources 限制 Bazel 内存占用，防止 OOM
+          # 请根据 query 结果修改 //msm-kernel:oneplus_pad_pro_v0
+          ./tools/bazel run \
+            --local_ram_resources=HOST_RAM*.0.7 \
+            --local_cpu_resources=2 \
+            //msm-kernel:oneplus_pad_pro_v0_dist -- --destdir=../out
+
+      - name: 7. 打包产物
+        run: |
+          cd out
+          tar -czf ../kernel_dist.tar.gz *
+
+      - name: 8. 上传到 Actions 产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: Oneplus-Pad-Pro-Kernel-Artifacts
+          path: kernel_dist.tar.gz
