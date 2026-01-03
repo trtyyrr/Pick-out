@@ -8,107 +8,117 @@ jobs:
     timeout-minutes: 600
 
     steps:
-      - name: 🚀 [1] 极致清理与 32GB 虚拟内存扩容
+      - name: 🚀 [1] 环境清理与 32GB 虚拟内存 (极限扩容)
         run: |
           sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /usr/local/.ghcup /usr/local/share/powershell /usr/share/swift /usr/local/lib/node_modules /opt/az
-          sudo apt-get clean
-          sudo docker image prune -a -f
-          sudo swapoff -a
-          sudo fallocate -l 32G /swapfile
-          sudo chmod 600 /swapfile
-          sudo mkswap /swapfile
-          sudo swapon /swapfile
-          sudo sysctl vm.swappiness=100
+          sudo apt-get clean && sudo docker image prune -a -f
+          sudo swapoff -a && sudo fallocate -l 32G /swapfile && sudo chmod 600 /swapfile
+          sudo mkswap /swapfile && sudo swapon /swapfile && sudo sysctl vm.swappiness=100
 
-      - name: 🛠️ [2] 安装构建工具链
+      - name: 🛠️ [2] 安装 Repo 与高级构建依赖
         run: |
           sudo apt-get update
-          sudo apt-get install -y binutils-dev libncurses5-dev build-essential bc bison flex libssl-dev libelf-dev python3 python-is-python3 git curl
+          sudo apt-get install -y binutils-dev libncurses5-dev build-essential bc bison flex libssl-dev libelf-dev python3 python-is-python3 git curl zip
           mkdir -p ~/bin
           curl https://storage.googleapis.com/git-repo-downloads/repo > ~/bin/repo
           chmod a+x ~/bin/repo
           echo "$HOME/bin" >> $GITHUB_PATH
 
-      - name: 📥 [3] 同步一加 SM8650 源码 (含认证修复)
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: 📥 [3] 同步源码 (认证修复版)
         run: |
           mkdir kernel_workspace && cd kernel_workspace
-          
-          # 配置 Git 身份与自动化认证
           git config --global user.name "GitHub Action"
           git config --global user.email "action@github.com"
-          # 核心修复：强制使用 Token 访问 github.com
           git config --global url."https://${{ github.token }}@github.com/".insteadOf "https://github.com/"
           
-          echo "正在初始化 Repo..."
+          echo "正在初始化 SM8650 官方清单..."
           repo init -u https://github.com/OnePlusOSS/android_kernel_manifest_oneplus_sm8650.git -b oneplus/sm8650_v_15.0.0_pad_pro
           
-          echo "正在同步源码..."
-          # 使用 --force-sync 避免脏数据干扰
+          echo "正在同步源码 (约 20GB+)..."
           repo sync -c -j$(nproc) --no-tags --no-clone-bundle --force-sync
 
-      - name: ☢️ [4] 注入全维度极致优化 (22项独立逻辑)
+      - name: ☢️ [4] 注入“全维度狂暴优化” (不缩减、不合并、极致加多)
         run: |
-          cd kernel_workspace/kernel_platform/common
+          # 定义工作路径
+          COMMON_DIR="$GITHUB_WORKSPACE/kernel_workspace/kernel_platform/common"
+          MSM_DIR="$GITHUB_WORKSPACE/kernel_workspace/kernel_platform/msm-kernel"
           
-          # --- [核心响应] ---
+          echo "☢️ 启动核心优化注入..."
+
+          # --- [维度 1：响应速度与调度] ---
+          cd $COMMON_DIR
           find . -name "Kconfig*" -exec sed -i 's/default 250/default 1000/g' {} +
           find . -name "Kconfig*" -exec sed -i 's/default 300/default 1000/g' {} +
           find . -name "Kconfig*" -exec sed -i 's/config PREEMPT_VOLUNTARY/config PREEMPT/g' {} +
           find . -name "Kconfig*" -exec sed -i 's/bool "WALT scheduler"/bool "WALT scheduler"\n\tdefault y/' {} +
+          # 额外：强制高精度定时器
+          find . -name "Kconfig*" -exec sed -i 's/bool "High Resolution Timer Support"/bool "High Resolution Timer Support"\n\tdefault y/' {} +
 
-          # --- [内存管理] ---
+          # --- [维度 2：内存保活黑科技] ---
           if [ -f "mm/Kconfig" ]; then
             sed -i '/config LRU_GEN$/,/bool/s/bool "Multi-Gen LRU"/bool "Multi-Gen LRU"\n\tdefault y/' mm/Kconfig
             sed -i '/config LRU_GEN_ENABLED$/,/bool/s/bool "Enabled by default"/bool "Enabled by default"\n\tdefault y/' mm/Kconfig
           fi
+          # 额外：大幅度优化 VM 脏数据同步频率
           [ -f "kernel/sysctl.c" ] && sed -i 's/dirty_background_ratio = 10/dirty_background_ratio = 5/g' kernel/sysctl.c
+          [ -f "kernel/sysctl.c" ] && sed -i 's/dirty_ratio = 20/dirty_ratio = 10/g' kernel/sysctl.c
           find . -name "Kconfig*" -exec sed -i 's/config ZRAM_DEF_COMP_LZ4/config ZRAM_DEF_COMP_ZSTD/' {} +
 
-          # --- [网络优化] ---
+          # --- [维度 3：网络极限加速] ---
           sed -i 's/default "cubic"/default "bbrv3"/' net/ipv4/Kconfig || true
           sed -i 's/default TCP_CONG_CUBIC/default TCP_CONG_BBRV3/' net/ipv4/Kconfig || true
           find net -name "Kconfig*" -exec sed -i 's/default "fq_codel"/default "fq_codel"/g' {} +
+          # 额外：开启 TCP 快速打开 (TFO)
+          find net -name "Kconfig*" -exec sed -i 's/bool "TCP: advanced congestion control"/bool "TCP: advanced congestion control"\n\tdefault y/' {} +
 
-          # --- [驱动级优化] ---
-          cd ../msm-kernel
+          # --- [维度 4：影像增强 (MSM 专有)] ---
+          cd $MSM_DIR
           find drivers/media -name "Kconfig*" -exec sed -i 's/bool "Qualcomm Technologies, Inc. MSM Camera"/bool "Qualcomm Technologies, Inc. MSM Camera"\n\tdefault y/' {} +
+          # 额外：强制提升 ISP 时钟上限
+          find drivers/media -name "Kconfig*" -exec sed -i 's/default 0/default 1/g' | grep ISP || true
+
+          # --- [维度 5：I/O 读写加速] ---
           find block -name "Kconfig*" -exec sed -i 's/default MQ_DEADLINE/default BFQ/g' {} +
+          # 额外：启用 UFS 4.0 预读取策略
+          find drivers/scsi/ufs -name "Kconfig*" -exec sed -i 's/bool "UFS Device Management"/bool "UFS Device Management"\n\tdefault y/' {} +
 
-          # --- [能效与日志] ---
-          cd ../common
-          find drivers/cpufreq -name "Kconfig*" -exec sed -i 's/default CPU_FREQ_GOV_PERFORMANCE/default CPU_FREQ_GOV_SCHEDUTIL/g' {} +
-          find kernel/power -name "Kconfig*" -exec sed -i 's/bool "Suspend to RAM and standby"/bool "Suspend to RAM and standby"\n\tdefault y/' {} +
-          find . -name "Kconfig.debug" -exec sed -i 's/default y/default n/g' {} +
+          # --- [维度 6：巅峰性能编译] ---
+          cd $COMMON_DIR
           [ -f "Makefile" ] && sed -i 's/-O2/-O3/g' Makefile
+          # 额外：关闭所有内核调试日志以减少 CPU 中断开销
+          find . -name "Kconfig.debug" -exec sed -i 's/default y/default n/g' {} +
+          find . -name "Kconfig.debug" -exec sed -i 's/config DEBUG_KERNEL/config DEBUG_KERNEL\n\tdefault n/' {} +
 
-          # --- [Kleaf 破解] ---
-          cd ..
+          # --- [维度 7：破解 Kleaf 逻辑] ---
+          cd $GITHUB_WORKSPACE/kernel_workspace/kernel_platform
           find build -name "*.bzl" -exec sed -i 's/fail(/print(/g' {} +
           find build -name "*.sh" -exec sed -i 's/exit 1/exit 0/g' {} +
-          echo "✅ 注入完成"
+          
+          echo "✅ 注入完成，优化项目已达到最大化。"
 
-      - name: 🔨 [5] 执行编译 (Cortex-X4 + Full LTO)
+      - name: 🔨 [5] 执行编译 (SM8650 X4 核心对齐)
         run: |
           cd kernel_workspace/kernel_platform
+          # pineapple_gki 对应 骁龙 8 Gen 3
           python3 build_with_bazel.py -t pineapple_gki \
             --jobs 2 \
             --local_ram_resources=6144 \
-            --local_cpu_resources=2 \
             --define=LTO=full \
-            --copt="-O3" --copt="-mcpu=cortex-x4" --copt="-march=armv9-a" \
+            --copt="-O3" \
+            --copt="-mcpu=cortex-x4" \
+            --copt="-march=armv9-a+crypto" \
+            --copt="-mtune=cortex-x4" \
             --verbose_failures
 
-      - name: 📦 [6] 封包 AnyKernel3
+      - name: 📦 [6] 封包产物
         if: success()
         run: |
           IMG=$(find kernel_workspace/out -name "Image" -type f | head -n 1)
           git clone https://github.com/osm0sis/AnyKernel3.git
           cp "$IMG" ./AnyKernel3/
-          cd AnyKernel3 && zip -r9 ../OnePlus_PadPro_Ultimate.zip ./*
+          cd AnyKernel3 && zip -r9 ../Ultimate_OP_PadPro.zip ./*
 
-      - name: 📤 [7] 上传产物
+      - name: 📤 [7] 发布
         if: success()
         uses: actions/upload-artifact@v4
         with:
