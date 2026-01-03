@@ -1,72 +1,64 @@
-name: OnePlus Pad Pro Kernel Build
+name: OnePlus_Kernel_Factory
 
 on:
-  workflow_dispatch: # 手动触发
+  workflow_dispatch: # 支持手机端 gh 命令手动触发
+  push:
+    paths:
+      - 'nn.yml'   # 当你修改 nn.yml 时自动触发编译
 
 jobs:
   build:
     runs-on: ubuntu-latest
     
     steps:
-      - name: 1. 检出清单仓库
+      - name: Checkout Config
         uses: actions/checkout@v4
 
-      - name: 2. 清理磁盘空间 & 设置 Swap
-        # Bazel 编译 sm8650 非常吃内存，增加 Swap 提高稳定性
-        uses: easimon/maximize-build-space@master
-        with:
-          root-reserve-mb: 16384
-          temp-reserve-mb: 2048
-          remove-dotnet: 'true'
-          remove-android: 'true'
-          remove-haskell: 'true'
-          remove-codeql: 'true'
-
-      - name: 3. 安装依赖工具
+      - name: Install System Dependencies
         run: |
-          sudo apt-get update
-          sudo apt-get install -y git git-lfs python3 curl cpio binutils build-essential
-          mkdir -p ~/bin
-          curl https://storage.googleapis.com/git-repo-downloads/repo > ~/bin/repo
-          chmod a+x ~/bin/repo
-          echo "$HOME/bin" >> $GITHUB_PATH
+          sudo apt update
+          sudo apt install -y python3 python3-pip git curl zip unzip tar
+          # 预装编译内核所需的库
+          sudo apt install -y build-essential bc flex bison libelf-dev libssl-dev
 
-      - name: 4. 配置 Git 用户
+      - name: Setup Kernel Platform
         run: |
-          git config --global user.email "bot@example.com"
-          git config --global user.name "KernelBot"
-
-      - name: 5. 使用 nn.yml 同步源码
-        run: |
-          mkdir kernel_workspace && cd kernel_workspace
-          # 动态获取当前分支，防止 refs/heads/main 报错
-          repo init -u ../ -b ${{ github.ref_name }} -m nn.yml --depth=1
-          # 同步代码，-j$(nproc) 使用多线程
-          repo sync -c -j$(nproc) --no-tags --force-sync --no-clone-bundle
-
-      - name: 6. 执行 Bazel 编译 (Kleaf)
-        run: |
-          cd kernel_workspace
+          # 1. 强力解析 nn.yml
+          MSM_URL=$(grep "msm_kernel_url" nn.yml | cut -d ':' -f 2- | tr -d ' "')
+          COMMON_URL=$(grep "common_url" nn.yml | cut -d ':' -f 2- | tr -d ' "')
+          BRANCH=$(grep "branch" nn.yml | cut -d ':' -f 2- | tr -d ' "')
           
-          # 第一步：查找正确的 Target 名 (防止指令写错)
-          echo "Checking available targets..."
-          ./tools/bazel query "kind('kernel_build', //msm-kernel/...)"
+          echo "正在准备同步: $BRANCH"
           
-          # 第二步：正式编译
-          # 注意：--local_ram_resources 限制 Bazel 内存占用，防止 OOM
-          # 请根据 query 结果修改 //msm-kernel:oneplus_pad_pro_v0
-          ./tools/bazel run \
-            --local_ram_resources=HOST_RAM*.0.7 \
-            --local_cpu_resources=2 \
-            //msm-kernel:oneplus_pad_pro_v0_dist -- --destdir=../out
+          # 2. 创建目录结构
+          mkdir -p kernel_platform
+          cd kernel_platform
+          
+          # 3. 拉取源码 (depth 1 节省时间和空间)
+          git clone --depth 1 "$MSM_URL" -b "$BRANCH" msm-kernel
+          git clone --depth 1 "$COMMON_URL" -b "$BRANCH" common
+          
+          # 4. 建立一加固定的软链接
+          ln -sf msm-kernel/build_with_bazel.py build_with_bazel.py
+          ln -sf msm-kernel/bazel.WORKSPACE WORKSPACE
+          
+          # 5. 下载一加指定的 Bazel 二进制文件 (这是最容易报错的地方)
+          mkdir -p tools
+          curl -Lo tools/bazel https://github.com/bazelbuild/bazel/releases/download/6.4.0/bazel-6.4.0-linux-x86_64
+          chmod +x tools/bazel
 
-      - name: 7. 打包产物
+      - name: Execute Bazel Build
         run: |
-          cd out
-          tar -czf ../kernel_dist.tar.gz *
+          cd kernel_platform
+          # 设置环境变量，确保脚本能找到刚才下载的 bazel
+          export PATH=$PWD/tools:$PATH
+          # 执行编译：针对一加 Pad Pro (pineapple 平台)
+          python3 build_with_bazel.py -t pineapple gki
 
-      - name: 8. 上传到 Actions 产物
+      - name: Upload Kernel Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Oneplus-Pad-Pro-Kernel-Artifacts
-          path: kernel_dist.tar.gz
+          name: OnePlus_PadPro_Kernel
+          path: |
+            kernel_platform/out/msm-kernel-pineapple-gki/dist/Image*
+            kernel_platform/out/msm-kernel-pineapple-gki/dist/*.ko
