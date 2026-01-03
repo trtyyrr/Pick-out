@@ -1,10 +1,10 @@
-name: Remote_Control_Kernel_Build
+name: OnePlus_PadPro_Kernel_Factory
 
 on:
   workflow_dispatch:
     inputs:
       custom_command:
-        description: '在云端执行的指令'
+        description: '编译指令'
         required: true
         default: 'python3 kernel_platform/build_with_bazel.py -t pineapple gki'
 
@@ -12,14 +12,25 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout Manifest
+      - name: Maximize Build Space
+        run: |
+          # 腾出空间：删除无用的大型组件
+          sudo rm -rf /usr/share/dotnet
+          sudo rm -rf /usr/local/lib/android
+          sudo rm -rf /opt/ghc
+          sudo rm -rf "/usr/local/share/boost"
+          sudo rm -rf "$AGENT_TOOLSDIRECTORY"
+          echo "清理完成，当前磁盘状态："
+          df -h
+
+      - name: Checkout Config
         uses: actions/checkout@v4
 
-      - name: Configure Git & Token
+      - name: Configure Git
         run: |
-          # 注入你的 Token，防止同步源码时权限报错
           git config --global user.email "bot@github.com"
           git config --global user.name "KernelBot"
+          # 注入 Token 确保拉取私有库或高频率访问不被拦截
           git config --global url."https://${{ secrets.GITHUB_TOKEN }}@github.com/".insteadOf "https://github.com/"
 
       - name: Install Repo Tool
@@ -29,34 +40,50 @@ jobs:
           chmod a+x ~/bin/repo
           echo "$HOME/bin" >> $GITHUB_PATH
 
-      - name: Sync Source (Using Manifest)
+      - name: Sync Source
         run: |
           mkdir -p workspace && cd workspace
-          # 初始化。注意：这里假设你的 manifest.xml 就在本仓库根目录
+          # 初始化 Manifest (确保你的 manifest.xml 在仓库根目录)
           repo init -u https://github.com/${{ github.repository }}.git -b main -m manifest.xml
-          
-          # 同步源码。使用 --no-clone-bundle 减少权限验证环节
-          repo sync -c -j$(nproc) --no-tags --no-clone-bundle --force-sync
+          # --depth=1 是防止磁盘爆满的关键
+          repo sync -c -j$(nproc) --no-tags --no-clone-bundle --force-sync --depth=1
 
       - name: Fix Execution Permissions
         run: |
-          # 核心步骤：给所有的脚本和工具链加上执行权限，防止“Permission Denied”
           cd workspace
+          # 遍历所有工具链和脚本并赋予执行权限
           find kernel_platform -name "*.sh" -exec chmod +x {} +
           find kernel_platform -name "bazel" -exec chmod +x {} +
-          chmod +x kernel_platform/build_with_bazel.py
+          [ -f kernel_platform/build_with_bazel.py ] && chmod +x kernel_platform/build_with_bazel.py
 
-      - name: Execute Custom Command
+      - name: Execute Build
         run: |
           cd workspace
-          # 执行终端指令
+          # 执行编译指令
           ${{ github.event.inputs.custom_command }}
 
-      - name: Upload Result
+      - name: Package AnyKernel3
+        if: success()
+        run: |
+          # 1. 寻找编译产物 Image.gz
+          KERNEL_IMAGE=$(find workspace/out -name "Image.gz" | head -n 1)
+          if [ -z "$KERNEL_IMAGE" ]; then echo "Image.gz not found"; exit 1; fi
+          
+          # 2. 克隆 AnyKernel3 模板
+          git clone --depth=1 https://github.com/osm0sis/AnyKernel3.git ak3
+          
+          # 3. 准备打包
+          cp "$KERNEL_IMAGE" ak3/
+          cd ak3
+          # 这里可以根据需要修改 anykernel.sh 的 device.name
+          sed -i 's/device.name1=.*/device.name1=OnePlusPadPro/' anykernel.sh
+          zip -r9 ../OnePlus_PadPro_Kernel_AK3.zip * -x .git README.md
+          
+      - name: Upload Kernel Artifact
         if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: OnePlus_PadPro_Kernel
+          name: OnePlus_PadPro_Kernel_Package
           path: |
-            workspace/out/*/dist/Image*
+            *.zip
             workspace/out/*/dist/*.ko
