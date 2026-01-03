@@ -30,7 +30,7 @@ jobs:
           repo init -u https://github.com/${{ github.repository }}.git -b main -m manifest.xml --depth=1
           repo sync -c -j$(nproc) --no-tags --no-clone-bundle --force-sync
 
-            - name: 3. 全维度底层注入 (绕过校验版)
+      - name: 3. 全维度底层注入 (绕过校验版)
         run: |
           cd workspace/kernel_platform/common
           echo "🚀 启动底层硬编码注入，不触动 defconfig 文件..."
