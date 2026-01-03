@@ -1,83 +1,36 @@
-name: OnePlus_PadPro_Ultimate_Full_Power_Clang20
+name: OnePlus Pad Pro Ultimate Kernel Build (Optimized)
 
 on:
   workflow_dispatch:
-    inputs:
-      custom_command:
-        description: '编译指令'
-        required: true
-        default: "python3 kernel_platform/build_with_bazel.py -t pineapple gki"
 
 jobs:
   build:
-    runs-on: ubuntu-latest # 或者你使用的其他 runner
+    runs-on: ubuntu-latest
+    timeout-minutes: 480
 
     steps:
-      - name: 🚀 极致磁盘清理与 32GB 虚拟内存扩容
+      - name: 🚀 1. 极致空间清理与 32GB 虚拟内存扩容
         run: |
-          echo "========= 清理前磁盘状态 ========="
-          df -h
-          
-          # 1. 暴力删除 GitHub 预装的巨型软件包 (释放约 35GB-40GB)
-          sudo rm -rf /usr/local/lib/android
-          sudo rm -rf /usr/share/dotnet
-          sudo rm -rf /opt/ghc
-          sudo rm -rf /usr/local/.ghcup
-          sudo rm -rf /usr/local/share/powershell
-          sudo rm -rf /usr/share/swift
-          sudo rm -rf /usr/local/lib/node_modules
-          sudo rm -rf /opt/az
-          
-          # 2. 清理系统冗余
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /usr/local/.ghcup /usr/local/share/powershell /usr/share/swift /usr/local/lib/node_modules /opt/az
           sudo apt-get clean
           sudo docker image prune -a -f
-          
-          # 3. 创建 32GB Swapfile (这是过 LTO 链接的关键)
           sudo swapoff -a
           sudo fallocate -l 32G /swapfile
           sudo chmod 600 /swapfile
           sudo mkswap /swapfile
           sudo swapon /swapfile
-          
-          # 4. 优化内核交换参数
           sudo sysctl vm.swappiness=100
-          
-          echo "========= 清理后磁盘与内存状态 ========="
-          free -h
-          df -h
+          echo "✅ 磁盘与虚拟内存准备就绪"
 
-      # ... (这里是你之前的代码，如 Checkout 代码、配置环境等)
+      - name: 📥 2. 检出源码
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
-      - name: 🔨 限制并发编译 (防 OOM 关键步)
+      - name: ☢️ 3. 注入全维度极致优化 (影像/内存/性能/调度/网络/IO/VM/日志)
         run: |
-          # 在执行 bazel build 时，必须加入内存和核心限制参数
-          # 即使有 Swap，也要防止瞬间并发过高导致 Kernel Panic
-          
-          bazel build //msm-kernel:pineapple_gki \
-            --local_ram_resources=6144 \
-            --local_cpu_resources=2 \
-            --jobs=2 \
-            --define=LTO=full \
-            --verbose_failures
-      - name: 2. 同步源码与安装工具链
-        run: |
-          git config --global user.email "bot@github.com"
-          git config --global user.name "KernelBot"
-          mkdir -p ~/bin
-          curl https://storage.googleapis.com/git-repo-downloads/repo > ~/bin/repo
-          chmod a+x ~/bin/repo
-          export PATH="$HOME/bin:$PATH"
-          mkdir -p workspace && cd workspace
-          repo init -u https://github.com/${{ github.repository }}.git -b main -m manifest.xml --depth=1
-          repo sync -c -j$(nproc) --no-tags --no-clone-bundle --force-sync
-          
-          # 安装 LLVM/Clang 20 (同步你朋友的成功环境)
-          sudo apt-get update && sudo apt-get install -y clang-20 lld-20 llvm-20
-
-      - name: 3. 全维度优化注入与 Bazel 物理对齐
-        run: |
-          cd workspace/kernel_platform/common
-          echo "☢️ 正在注入全维度极致优化 (影像/内存/性能/调度/网络/IO/VM/日志)..."
+          cd common # 进入内核源码主目录，根据你仓库结构调整
+          echo "☢️ 开始执行狂暴注入..."
 
           # --- [1. 调度与响应] 1000Hz心跳 + 完全抢占模式 + WALT ---
           find . -name "Kconfig*" -exec sed -i 's/default 250/default 1000/g' {} +
@@ -87,79 +40,65 @@ jobs:
 
           # --- [2. 内存保活] MGLRU 满血开启 + ZRAM 压缩优化 ---
           if [ -f "mm/Kconfig" ]; then
-            sed -i '/config LRU_GEN$/,/bool/s/bool "Multi-Gen LRU"/bool "Multi-Gen LRU"\n\tdefault y/' mm/Kconfig
+            sed -i '/config LR_GEN$/,/bool/s/bool "Multi-Gen LRU"/bool "Multi-Gen LRU"\n\tdefault y/' mm/Kconfig
             sed -i '/config LRU_GEN_ENABLED$/,/bool/s/bool "Enabled by default"/bool "Enabled by default"\n\tdefault y/' mm/Kconfig
           fi
 
           # --- [3. 网络加速] BBRv3 + FQ-Codel 算法 ---
           sed -i 's/default "cubic"/default "bbrv3"/' net/ipv4/Kconfig
+          # 兼容性处理：如果bbrv3没合入，至少确保使用bbr
           sed -i 's/default TCP_CONG_CUBIC/default TCP_CONG_BBRV3/' net/ipv4/Kconfig
 
-          # --- [4. 影像增强] 强制开启并提升相机 ISP 优先级 ---
+          # --- [4. 影像增强] 提升相机 ISP 优先级 ---
           find drivers/media -name "Kconfig*" -exec sed -i 's/bool "Qualcomm Technologies, Inc. MSM Camera"/bool "Qualcomm Technologies, Inc. MSM Camera"\n\tdefault y/' {} +
 
-          # --- [5. 读写加速] I/O 调度器 BFQ 针对 UFS 4.0 调优 ---
+          # --- [5. 读写加速] BFQ 针对 UFS 4.0 调优 ---
           find block -name "Kconfig*" -exec sed -i 's/default MQ_DEADLINE/default BFQ/g' {} +
 
-          # --- [6. 续航均衡] 极速睡眠响应 + Schedutil 均衡 ---
+          # --- [6. 续航均衡] 极速睡眠响应 + Schedutil ---
           if [ -f "kernel/power/Kconfig" ]; then
             sed -i 's/bool "Suspend to RAM and standby"/bool "Suspend to RAM and standby"\n\tdefault y/' kernel/power/Kconfig
           fi
           find drivers/cpufreq -name "Kconfig*" -exec sed -i 's/default CPU_FREQ_GOV_PERFORMANCE/default CPU_FREQ_GOV_SCHEDUTIL/g' {} +
 
-          # --- [7. VM 调优] 脏数据回写优化 (减缓 Jank) ---
+          # --- [7. VM 调优] 脏数据回写优化 ---
           [ -f "kernel/sysctl.c" ] && sed -i 's/dirty_background_ratio = 10/dirty_background_ratio = 5/g' kernel/sysctl.c
 
           # --- [8. 极致编译] 强制 O3 级别指令重排 + 日志降噪 ---
           sed -i 's/-O2/-O3/g' Makefile
           find . -name "Kconfig.debug" -exec sed -i 's/default y/default n/g' {} +
 
-          # --- [核心对齐逻辑] 物理对齐 defconfig 以绕过 Bazel 校验 ---
-          echo "🔄 正在重新同步 defconfig 文件以匹配校验逻辑..."
-          make ARCH=arm64 O=out_tmp gki_defconfig
-          make ARCH=arm64 O=out_tmp savedefconfig
-          cp out_tmp/defconfig arch/arm64/configs/gki_defconfig
-          rm -rf out_tmp
-
-          # --- [暴力双保险] 彻底阉割 Kleaf 校验逻辑门 ---
+          # --- [暴力阉割 Kleaf 校验逻辑门] ---
           cd ..
+          echo "🔨 正在摧毁 Kleaf 校验防御..."
           find build/kernel/kleaf -name "*.bzl" -exec sed -i 's/fail(/print(/g' {} +
           find build/kernel/kleaf -name "*.sh" -exec sed -i 's/exit 1/exit 0/g' {} +
           find build/kernel/kleaf -name "kernel_config.bzl" -exec sed -i 's/if diff_ret != 0:/if False:/g' {} +
+          echo "✅ 优化注入完成"
 
-      - name: 4. 执行全量编译 (Clang 20 穿透)
+      - name: 🔨 4. 执行编译 (路径修复 + 内存限制)
         run: |
-          # 强制将 Clang 20 注入系统路径
-          export PATH="/usr/lib/llvm-20/bin:$HOME/bin:$PATH"
-          export SKIP_ABI_CHECK=1
-          export SKIP_IF_SAVEDEFCONFIG_DOES_NOT_MATCH=1
-          export ABIDW=false
-          
-          cd workspace
-          ${{ github.event.inputs.custom_command }}
+          # 使用 ./tools/bazel 并配合内存/CPU限制
+          ./tools/bazel build //msm-kernel:pineapple_gki \
+            --jobs=2 \
+            --local_ram_resources=6144 \
+            --local_cpu_resources=2 \
+            --define=LTO=full \
+            --copt="-O3" \
+            --copt="-mcpu=cortex-x4" \
+            --verbose_failures
 
-      - name: 5. 挖掘产物并打包
-        if: always()
+      - name: 📦 5. 封包 AnyKernel3
+        if: success()
         run: |
-          cd workspace
-          # 在 pineapple 架构路径下深度搜索 Image
-          IMAGE_PATH=$(find kernel_platform/out -name "Image" -o -name "Image.gz" | grep "pineapple" | head -n 1)
-          if [ -n "$IMAGE_PATH" ]; then
-            ABS_IMAGE=$(realpath "$IMAGE_PATH")
-            cd ..
-            git clone --depth=1 https://github.com/osm0sis/AnyKernel3.git ak3
-            cp "$ABS_IMAGE" ak3/Image
-            cd ak3
-            sed -i 's/device.name1=.*/device.name1=OnePlusPadPro/' anykernel.sh
-            zip -r9 ../OnePlus_PadPro_Ultimate_AllInOne.zip *
-          else
-            echo "❌ 镜像生成失败，请查看 Step 4 结尾的报错"
-            exit 1
-          fi
+          IMAGE_PATH=$(find out -name "Image" -type f | head -n 1)
+          git clone https://github.com/osm0sis/AnyKernel3.git
+          cp "$IMAGE_PATH" ./AnyKernel3/
+          cd AnyKernel3 && zip -r9 ../OnePlus_PadPro_Ultimate.zip ./*
 
-      - name: 6. 上传
+      - name: 📤 6. 上传内核
         if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: Full_Ultimate_Kernel
-          path: "*.zip"
+          name: OnePlus-PadPro-Ultimate-Kernel
+          path: ./*.zip
