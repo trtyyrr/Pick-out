@@ -1,14 +1,45 @@
+name: Remote_Control_Kernel_Build
+
 on:
   workflow_dispatch:
     inputs:
-      build_command:
-        description: '执行的编译命令'
-        default: 'python3 build_with_bazel.py -t pineapple gki'
+      custom_command:
+        description: '在云端执行的指令'
+        required: true
+        default: 'python3 kernel_platform/build_with_bazel.py -t pineapple gki'
 
 jobs:
-  remote_build:
+  build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - name: 执行终端传来的指令
-        run: ${{ github.event.inputs.build_command }}
+      - name: Checkout Config
+        uses: actions/checkout@v4
+
+      - name: Install Repo Tool
+        run: |
+          mkdir -p ~/bin
+          curl https://storage.googleapis.com/git-repo-downloads/repo > ~/bin/repo
+          chmod a+x ~/bin/repo
+          echo "PATH=$HOME/bin:$PATH" >> $GITHUB_ENV
+
+      - name: Sync Source (Using Manifest)
+        run: |
+          export PATH=$HOME/bin:$PATH
+          # 1. 初始化 repo (使用你提供的 Manifest)
+          mkdir -p workspace && cd workspace
+          repo init -u https://github.com/trtyyrr/Pick-out.git -b main -m manifest.xml
+          
+          # 2. 同步源码 (由于 sm8650 很大，使用 -c 和 -j 优化)
+          repo sync -c -j$(nproc) --no-tags --no-clone-bundle
+
+      - name: Execute Custom Command
+        run: |
+          cd workspace
+          # 执行你从终端传过来的指令
+          ${{ github.event.inputs.custom_command }}
+
+      - name: Upload Result
+        uses: actions/upload-artifact@v4
+        with:
+          name: OnePlus_PadPro_Kernel
+          path: workspace/out/*/dist/Image*
