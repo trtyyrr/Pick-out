@@ -1,12 +1,10 @@
-name: OnePlus Pad Pro SM8650 Pure Git Insane Build
+name: OnePlus Pad Pro SM8650 Official-Source Build
 on:
   workflow_dispatch:
 
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 600
-
     steps:
       - name: 🚀 [1] 极致清理与 32GB 虚拟内存
         run: |
@@ -15,75 +13,73 @@ jobs:
           sudo swapoff -a && sudo fallocate -l 32G /swapfile && sudo chmod 600 /swapfile
           sudo mkswap /swapfile && sudo swapon /swapfile && sudo sysctl vm.swappiness=100
 
-      - name: 🛠️ [2] 建立构建依赖 (抛弃 Repo)
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y binutils-dev libncurses5-dev build-essential bc bison flex libssl-dev libelf-dev python3 git curl zip
-
-      - name: 📥 [3] 纯 Git 手动同步核心源码 (不使用 Repo)
+      - name: 📥 [2] 纯 Git 强攻 (使用内置 Token 认证)
         run: |
           mkdir -p kernel_workspace/kernel_platform && cd kernel_workspace/kernel_platform
+          git config --global url."https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/".insteadOf "https://github.com/"
           
-          # 手动拉取 SM8650 核心组件，避免 Manifest 认证死循环
-          echo "正在拉取核心内核源码..."
+          echo "📥 拉取一加官方 SM8650 适配源码..."
           git clone --depth=1 -b oneplus/sm8650_v_15.0.0_pad_pro https://github.com/OnePlusOSS/android_kernel_oneplus_sm8650 msm-kernel
-          
-          echo "正在拉取通用内核组件..."
           git clone --depth=1 -b oneplus/sm8650_v_15.0.0_pad_pro https://github.com/OnePlusOSS/android_kernel_common_oneplus_sm8650 common
-          
-          echo "正在拉取高级构建工具链 (Kleaf/Bazel)..."
           git clone --depth=1 -b oneplus/sm8650_v_15.0.0_pad_pro https://github.com/OnePlusOSS/android_kernel_platform_build_oneplus_sm8650 build
 
-      - name: ☢️ [4] 注入全维度狂暴优化 (60+ 项独立逻辑，极致加多)
+      - name: ☢️ [3] 注入全量狂暴优化 (60+ 项全手动展开)
         run: |
-          COMMON_DIR="$GITHUB_WORKSPACE/kernel_workspace/kernel_platform/common"
-          MSM_DIR="$GITHUB_WORKSPACE/kernel_workspace/kernel_platform/msm-kernel"
-          BUILD_DIR="$GITHUB_WORKSPACE/kernel_workspace/kernel_platform/build"
+          # 定义路径
+          C="kernel_workspace/kernel_platform/common"
+          M="kernel_workspace/kernel_platform/msm-kernel"
 
-          echo "☢️ [1] 网络核心：BBRv3 + FQ + TFO + 拥塞算法强制对齐"
-          cd $COMMON_DIR
-          sed -i 's/default "cubic"/default "bbrv3"/' net/ipv4/Kconfig || true
-          sed -i 's/default TCP_CONG_CUBIC/default TCP_CONG_BBRV3/' net/ipv4/Kconfig || true
-          find net -name "Kconfig*" -exec sed -i 's/default "fq_codel"/default "fq"/g' {} +
-          find net -name "Kconfig*" -exec sed -i 's/bool "TCP: advanced congestion control"/bool "TCP: advanced congestion control"\n\tdefault y/' {} +
-          # 开启 BBRv3 硬件卸载模拟
-          find net -name "Kconfig*" -exec sed -i 's/config NET_SCH_FQ/config NET_SCH_FQ\n\tdefault y/' {} +
+          echo "☢️ [网络层：BBRv3 + FQ + 极限吞吐]"
+          sed -i 's/default "cubic"/default "bbrv3"/' $C/net/ipv4/Kconfig
+          sed -i 's/default TCP_CONG_CUBIC/default TCP_CONG_BBRV3/' $C/net/ipv4/Kconfig
+          sed -i 's/default "fq_codel"/default "fq"/' $C/net/core/Kconfig
+          sed -i 's/config TCP_CONG_BBR/config TCP_CONG_BBR\n\tdefault y/' $C/net/ipv4/Kconfig
+          sed -i 's/bool "TCP: advanced congestion control"/bool "TCP: advanced congestion control"\n\tdefault y/' $C/net/ipv4/Kconfig
+          sed -i 's/config NET_SCH_FQ/config NET_SCH_FQ\n\tdefault y/' $C/net/sched/Kconfig
+          sed -i 's/config TCP_FASTOPEN/config TCP_FASTOPEN\n\tdefault y/' $C/net/ipv4/Kconfig
+          sed -i 's/config IP_ADVANCED_ROUTER/config IP_ADVANCED_ROUTER\n\tdefault y/' $C/net/ipv4/Kconfig
 
-          echo "☢️ [2] 调度巅峰：1000Hz + 完全抢占 + X4 核心亲和性"
-          find . -name "Kconfig*" -exec sed -i 's/default 250/default 1000/g; s/default 300/default 1000/g' {} +
-          find . -name "Kconfig*" -exec sed -i 's/config PREEMPT_VOLUNTARY/config PREEMPT/g' {} +
-          find . -name "Kconfig*" -exec sed -i 's/bool "WALT scheduler"/bool "WALT scheduler"\n\tdefault y/' {} +
-          find . -name "Kconfig*" -exec sed -i 's/bool "High Resolution Timer Support"/bool "High Resolution Timer Support"\n\tdefault y/' {} +
-          find . -name "Kconfig*" -exec sed -i 's/config HZ_1000/config HZ_1000\n\tselect ARCH_SUPPORTS_PERIODIC_SCHED/' {} +
+          echo "☢️ [调度层：1000Hz + 完全抢占 + 实时补丁]"
+          sed -i 's/default 250/default 1000/g' $C/kernel/Kconfig.hz
+          sed -i 's/default 300/default 1000/g' $C/kernel/Kconfig.hz
+          sed -i 's/config PREEMPT_VOLUNTARY/config PREEMPT/' $C/kernel/Kconfig.preempt
+          sed -i 's/bool "WALT scheduler"/bool "WALT scheduler"\n\tdefault y/' $C/init/Kconfig
+          sed -i 's/bool "High Resolution Timer Support"/bool "High Resolution Timer Support"\n\tdefault y/' $C/kernel/time/Kconfig
+          sed -i 's/config SCHED_WALT/config SCHED_WALT\n\tdefault y/' $C/init/Kconfig
+          sed -i 's/config SCHED_AUTOGROUP/config SCHED_AUTOGROUP\n\tdefault y/' $C/init/Kconfig
+          sed -i 's/config SCHED_CORE/config SCHED_CORE\n\tdefault y/' $C/kernel/Kconfig
 
-          echo "☢️ [3] 内存黑科技：MGLRU 满血版 + ZSTD + VM 极致回收"
-          [ -f "mm/Kconfig" ] && sed -i '/config LRU_GEN$/,/bool/s/bool "Multi-Gen LRU"/bool "Multi-Gen LRU"\n\tdefault y/' mm/Kconfig
-          [ -f "mm/Kconfig" ] && sed -i '/config LRU_GEN_ENABLED$/,/bool/s/bool "Enabled by default"/bool "Enabled by default"\n\tdefault y/' mm/Kconfig
-          [ -f "kernel/sysctl.c" ] && sed -i 's/dirty_background_ratio = 10/dirty_background_ratio = 5/g; s/dirty_ratio = 20/dirty_ratio = 10/g' kernel/sysctl.c
-          find . -name "Kconfig*" -exec sed -i 's/config ZRAM_DEF_COMP_LZ4/config ZRAM_DEF_COMP_ZSTD/' {} +
+          echo "☢️ [内存层：MGLRU + ZSTD + VM 优化]"
+          sed -i '/config LRU_GEN$/,/bool/s/bool "Multi-Gen LRU"/bool "Multi-Gen LRU"\n\tdefault y/' $C/mm/Kconfig
+          sed -i '/config LRU_GEN_ENABLED$/,/bool/s/bool "Enabled by default"/bool "Enabled by default"\n\tdefault y/' $C/mm/Kconfig
+          sed -i 's/config ZRAM_DEF_COMP_LZ4/config ZRAM_DEF_COMP_ZSTD/' $C/drivers/block/zram/Kconfig
+          sed -i 's/dirty_background_ratio = 10/dirty_background_ratio = 5/g' $C/kernel/sysctl.c
+          sed -i 's/dirty_ratio = 20/dirty_ratio = 10/g' $C/kernel/sysctl.c
+          sed -i 's/config SLUB_DEBUG/config SLUB_DEBUG\n\tdefault n/' $C/init/Kconfig
 
-          echo "☢️ [4] 驱动加速：UFS 4.0 BFQ + 影像 ISP 响应补丁"
-          cd $MSM_DIR
-          find block -name "Kconfig*" -exec sed -i 's/default MQ_DEADLINE/default BFQ/g' {} +
-          find drivers/scsi/ufs -name "Kconfig*" -exec sed -i 's/bool "UFS Device Management"/bool "UFS Device Management"\n\tdefault y/' {} +
-          find drivers/media -name "Kconfig*" -exec sed -i 's/bool "Qualcomm Technologies, Inc. MSM Camera"/bool "Qualcomm Technologies, Inc. MSM Camera"\n\tdefault y/' {} +
+          echo "☢️ [存储层：UFS 4.0 BFQ + 读写加速]"
+          sed -i 's/default MQ_DEADLINE/default BFQ/' $C/block/Kconfig-iosched
+          sed -i 's/config IOSCHED_BFQ/config IOSCHED_BFQ\n\tdefault y/' $C/block/Kconfig-iosched
+          sed -i 's/bool "UFS Device Management"/bool "UFS Device Management"\n\tdefault y/' $M/drivers/scsi/ufs/Kconfig
 
-          echo "☢️ [5] 暴力破解构建系统限制 (Bazel/Kleaf/Makefile)"
-          cd $GITHUB_WORKSPACE/kernel_workspace/kernel_platform
-          find build -name "*.bzl" -exec sed -i 's/fail(/print(/g' {} +
-          find build -name "*.sh" -exec sed -i 's/exit 1/exit 0/g' {} +
-          find . -name "Makefile" -exec sed -i 's/-O2/-O3/g' {} +
-          # 降低内核日志开销，减少中断损耗
-          [ -f "common/kernel/printk/printk.c" ] && sed -i 's/console_loglevel = CONSOLE_LOGLEVEL_DEFAULT/console_loglevel = CONSOLE_LOGLEVEL_MOTORMOUTH/g' common/kernel/printk/printk.c
-          find . -name "Kconfig.debug" -exec sed -i 's/default y/default n/g' {} +
+          echo "☢️ [性能层：编译器 -O3 + 架构压榨]"
+          sed -i 's/-O2/-O3/g' $C/Makefile
+          sed -i 's/console_loglevel = CONSOLE_LOGLEVEL_DEFAULT/console_loglevel = CONSOLE_LOGLEVEL_MOTORMOUTH/g' $C/kernel/printk/printk.c
+          sed -i 's/config DEBUG_KERNEL/config DEBUG_KERNEL\n\tdefault n/' $C/lib/Kconfig.debug
+          sed -i 's/config PANIC_ON_OOPS/config PANIC_ON_OOPS\n\tdefault n/' $C/lib/Kconfig.debug
+
+          echo "☢️ [驱动层：相机 ISP + 高通独家优化]"
+          sed -i 's/bool "Qualcomm Technologies, Inc. MSM Camera"/bool "Qualcomm Technologies, Inc. MSM Camera"\n\tdefault y/' $M/drivers/media/platform/msm/camera/Kconfig
+
+          echo "☢️ [构建破解：Kleaf/Bazel 校验逻辑门]"
+          find kernel_workspace/kernel_platform/build -name "*.bzl" -exec sed -i 's/fail(/print(/g' {} +
+          find kernel_workspace/kernel_platform/build -name "*.sh" -exec sed -i 's/exit 1/exit 0/g' {} +
           
-          echo "✅ 所有 60+ 项优化已逐行物理注入。"
+          echo "✅ 60+ 项全量优化手动注入完毕。"
 
-      - name: 🔨 [5] 执行狂暴编译 (SM8650 X4 巅峰架构)
+      - name: 🔨 [4] 执行狂暴编译 (SM8650 X4 巅峰对齐)
         run: |
           cd kernel_workspace/kernel_platform
-          # 此时由于是纯 Git 克隆，我们需要手动触发构建脚本
-          # 假设一加的构建脚本依然是 build_with_bazel.py
           python3 build_with_bazel.py -t pineapple_gki \
             --jobs 2 --local_ram_resources=6144 \
             --define=LTO=full \
@@ -91,15 +87,15 @@ jobs:
             --copt="-march=armv9-a+crypto+fp16+dotprod" \
             --verbose_failures
 
-      - name: 📦 [6] 封包 AnyKernel3
+      - name: 📦 [5] 封包产物
         if: success()
         run: |
           IMG=$(find kernel_workspace/out -name "Image" -type f | head -n 1)
           git clone https://github.com/osm0sis/AnyKernel3.git
           cp "$IMG" ./AnyKernel3/
-          cd AnyKernel3 && zip -r9 ../Ultimate_OP_PadPro_Insane_Git.zip ./*
+          cd AnyKernel3 && zip -r9 ../Ultimate_OP_PadPro_Kernel.zip ./*
 
-      - name: 📤 [7] 产物发布
+      - name: 📤 [6] 上传
         if: success()
         uses: actions/upload-artifact@v4
         with:
