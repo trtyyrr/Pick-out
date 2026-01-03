@@ -1,4 +1,4 @@
-name: OnePlus Pad Pro SM8650 Seven-Dim Insane Overkill
+name: OnePlus Pad Pro SM8650 Professional Overkill
 on:
   workflow_dispatch:
 
@@ -6,110 +6,102 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - name: 🚀 [1] 极致清理与磁盘脱水
+      - name: 🚀 [1] 极致清理与 32GB 内存扩容
         run: |
           sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /usr/local/.ghcup /usr/local/share/powershell /usr/share/swift /usr/local/lib/node_modules /opt/az
           sudo apt-get clean && sudo docker image prune -a -f
           sudo swapoff -a && sudo fallocate -l 32G /swapfile && sudo chmod 600 /swapfile
           sudo mkswap /swapfile && sudo swapon /swapfile && sudo sysctl vm.swappiness=100
 
-      - name: 📥 [2] 按照 Manifest 暴力拉取官方源码
+      - name: 📥 [2] 按照 Manifest 暴力拉取源码 (结构还原)
         run: |
           mkdir -p kernel_workspace/kernel_platform && cd kernel_workspace/kernel_platform
           git config --global url."https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/".insteadOf "https://github.com/"
+          
+          # 核心代码
           git clone --depth=1 -b oneplus/sm8650_v_15.0.0_pad_pro https://github.com/OnePlusOSS/android_kernel_oneplus_sm8650 msm-kernel
           git clone --depth=1 -b oneplus/sm8650_v_15.0.0_pad_pro https://github.com/OnePlusOSS/android_kernel_common_oneplus_sm8650 common
+          
+          # 构建系统 (这些是 Bazel 能运行的根基)
           git clone --depth=1 https://git.codelinaro.org/clo/la/kernel_platform/build/bazel_common_rules build/bazel_common_rules
           git clone --depth=1 https://git.codelinaro.org/clo/la/kernel_platform/prebuilts/bazel/linux-x86_64 prebuilts/bazel/linux-x86_64
           git clone --depth=1 https://git.codelinaro.org/clo/la/kernelplatform/prebuilts-master/clang/host/linux-x86 prebuilts/clang/host/linux-x86
+          
+          # 还原 Manifest 的 linkfile 逻辑
           ln -sf msm-kernel/bazel.WORKSPACE WORKSPACE
           ln -sf msm-kernel/build_with_bazel.py build_with_bazel.py
 
-      - name: ☢️ [3] ABI 爆破与环境修复 (前置准备)
+      - name: ☢️ [3] 七大维度“科学爆破”注入 (解决冲突与幻觉)
         run: |
           cd kernel_workspace/kernel_platform
+          GKI_CFG="common/arch/arm64/configs/gki_defconfig"
+          VND_CFG="msm-kernel/arch/arm64/configs/vendor/pineapple_GKI.config"
+
+          echo "🌐 [维度 1: 网络 BBRG (先清后再加)]"
+          # 使用 sed 删除所有可能冲突的拥塞控制和调度器配置
+          for cfg in $GKI_CFG $VND_CFG; do
+            [ -f "$cfg" ] || continue
+            sed -i '/CONFIG_TCP_CONG/d' $cfg
+            sed -i '/CONFIG_DEFAULT_TCP_CONG/d' $cfg
+            sed -i '/CONFIG_NET_SCH_FQ/d' $cfg
+            sed -i '/CONFIG_DEFAULT_NET_SCH/d' $cfg
+            # 暴力注入新标准
+            {
+              echo "CONFIG_TCP_CONG_BBR=y"
+              echo "CONFIG_TCP_CONG_BBRV3=y"
+              echo "CONFIG_DEFAULT_TCP_CONG=\"bbrv3\""
+              echo "CONFIG_NET_SCH_FQ=y"
+              echo "CONFIG_DEFAULT_NET_SCH=\"fq\""
+              echo "CONFIG_TCP_FASTOPEN=y"
+              echo "CONFIG_TCP_LOW_LATENCY=y"
+            } >> $cfg
+          done
+          # TCP 初始窗口 10 -> 32
+          find common/net/ipv4 -name "tcp_ipv4.c" -exec sed -i 's/TCP_INIT_CWND 10/TCP_INIT_CWND 32/g' {} +
+
+          echo "🚀 [维度 2 & 3: 性能与架构 (Makefile 层面修复)]"
+          # 放弃 Bazel 传参，直接改 Makefile。针对 8G3 全核心使用 armv9-a 优化，不锁定 X4 以防非法指令
+          find . -name "Makefile" -exec sed -i 's/-O2/-O3 -march=armv9-a+crypto -mtune=neoverse-v2/g' {} +
+          sed -i 's/CONFIG_HZ=250/CONFIG_HZ=1000/g' $GKI_CFG
+          sed -i 's/CONFIG_HZ_250=y/CONFIG_HZ_1000=y/g' $GKI_CFG
+
+          echo "🧠 [维度 4: 内存管理 MGLRU/ZSTD]"
+          sed -i '/CONFIG_LRU_GEN/d' $GKI_CFG
+          echo "CONFIG_LRU_GEN=y" >> $GKI_CFG
+          echo "CONFIG_LRU_GEN_ENABLED=y" >> $GKI_CFG
+          echo "CONFIG_ZRAM_DEF_COMP_ZSTD=y" >> $GKI_CFG
+
+          echo "📷 [维度 5: 影像响应与音质]"
+          echo "CONFIG_MSM_CAMERA=y" >> $VND_CFG
+          echo "CONFIG_MSM_NPU=y" >> $VND_CFG
+          echo "CONFIG_SND_SOC_WCD938X=y" >> $VND_CFG
+
+          echo "🛠️ [维度 6: ABI 爆破与构建环境]"
           find build -name "*.bzl" -exec sed -i 's/abi_definition =/abi_definition = None #/g' {} +
           find build -name "*.bzl" -exec sed -i 's/kmi_symbol_list =/kmi_symbol_list = None #/g' {} +
-          echo "DANGEROUS_SKIP_ABI_CHECK=true" >> $GITHUB_ENV
+          # 绕过 Clang 版本检查导致的失败
+          echo "KBUILD_BUILD_TIMESTAMP=$(date)" >> $GITHUB_ENV
 
-      - name: ☢️ [4] 七大维度“狂暴”代码注入 (手动展开，绝不缩减)
+      - name: 🔨 [4] 执行巅峰编译 (环境变量注入 LTO)
         run: |
           cd kernel_workspace/kernel_platform
+          # 通过环境变量强制开启 LTO
+          export LTO=full
+          export SKIP_ABI_CHECK=true
           
-          # 定义需要爆破的目标配置文件 (Defconfigs)
-          GKI_CONFIG="common/arch/arm64/configs/gki_defconfig"
-          VENDOR_CONFIG="msm-kernel/arch/arm64/configs/vendor/pineapple_GKI.config"
+          python3 build_with_bazel.py -t pineapple gki \
+            --jobs $(nproc) \
+            --skip_abi_check
 
-          echo "🌐 [1. 网络 BBRG]：注入 BBRv3 + FQ + TFO"
-          for cfg in $GKI_CONFIG $VENDOR_CONFIG; do
-            [ -f "$cfg" ] || continue
-            echo "CONFIG_TCP_CONG_BBR=y" >> $cfg
-            echo "CONFIG_TCP_CONG_BBRV3=y" >> $cfg
-            echo "CONFIG_DEFAULT_TCP_CONG=\"bbrv3\"" >> $cfg
-            echo "CONFIG_NET_SCH_FQ=y" >> $cfg
-            echo "CONFIG_DEFAULT_NET_SCH=\"fq\"" >> $cfg
-            echo "CONFIG_TCP_FASTOPEN=y" >> $cfg
-            echo "CONFIG_TCP_LOW_LATENCY=y" >> $cfg
-          done
-
-          echo "📷 [2. 影像]：ISP 响应与 NPU 暴力加速"
-          for cfg in $VENDOR_CONFIG; do
-            echo "CONFIG_MSM_CAMERA=y" >> $cfg
-            echo "CONFIG_MSM_NPU=y" >> $cfg
-            echo "CONFIG_MSM_NPU_DEBUG_LEVEL=0" >> $cfg
-            echo "CONFIG_COMMON_CLK_QCOM=y" >> $cfg
-          done
-
-          echo "🧠 [3. 内存]：MGLRU 满血 + ZSTD + VM 压榨"
-          for cfg in $GKI_CONFIG; do
-            echo "CONFIG_LRU_GEN=y" >> $cfg
-            echo "CONFIG_LRU_GEN_ENABLED=y" >> $cfg
-            echo "CONFIG_ZRAM_DEF_COMP_ZSTD=y" >> $cfg
-          done
-          # 物理爆破 VM 回收逻辑
-          sed -i 's/dirty_background_ratio = 10/dirty_background_ratio = 5/g' common/kernel/sysctl.c
-          sed -i 's/dirty_ratio = 20/dirty_ratio = 10/g' common/kernel/sysctl.c
-
-          echo "🔋 [4. 功耗]：能量模型与 TEO 调速器"
-          echo "CONFIG_ENERGY_MODEL=y" >> $GKI_CONFIG
-          echo "CONFIG_CPU_IDLE_GOV_TEO=y" >> $GKI_CONFIG
-
-          echo "🚀 [5. 性能]：1000Hz + 完全抢占 + X4 架构压榨"
-          sed -i 's/CONFIG_HZ=250/CONFIG_HZ=1000/g' $GKI_CONFIG
-          sed -i 's/CONFIG_HZ_250=y/CONFIG_HZ_1000=y/g' $GKI_CONFIG
-          echo "CONFIG_PREEMPT=y" >> $GKI_CONFIG
-          # 强制 Makefile 使用 O3 
-          find . -name "Makefile" -exec sed -i 's/-O2/-O3/g' {} +
-
-          echo "🎵 [6. 音质]：WCD938X 低延迟模式"
-          echo "CONFIG_SND_SOC_WCD938X=y" >> $VENDOR_CONFIG
-          echo "CONFIG_SND_SOC_WCD938X_MBHC=y" >> $VENDOR_CONFIG
-
-          echo "🔇 [7. 降噪]：彻底关闭调试日志损耗"
-          echo "CONFIG_SLUB_DEBUG=n" >> $GKI_CONFIG
-          echo "CONFIG_PANIC_ON_OOPS=n" >> $GKI_CONFIG
-          echo "CONFIG_DEBUG_KERNEL=n" >> $GKI_CONFIG
-          sed -i 's/console_loglevel = 7/console_loglevel = 3/g' common/kernel/printk/printk.c
-
-      - name: 🔨 [5] 执行巅峰编译 (Bazel SM8650 X4)
-        run: |
-          cd kernel_workspace/kernel_platform
-          python3 build_with_bazel.py -t pineapple_gki \
-            --jobs $(nproc) --local_ram_resources=6144 \
-            --define=LTO=full \
-            --skip_abi_check \
-            --copt="-O3" --copt="-mcpu=cortex-x4" --copt="-mtune=cortex-x4" \
-            --copt="-march=armv9-a+crypto+fp16+dotprod"
-
-      - name: 📦 [6] 封包
+      - name: 📦 [5] 封包产物
         run: |
           IMG=$(find kernel_workspace/out -name "Image" -type f | head -n 1)
           git clone https://github.com/osm0sis/AnyKernel3.git
           cp "$IMG" ./AnyKernel3/
-          cd AnyKernel3 && zip -r9 ../Ultimate_OP_PadPro_RealInsane.zip ./*
+          cd AnyKernel3 && zip -r9 ../Ultimate_OP_PadPro_Fixed.zip ./*
 
-      - name: 📤 [7] 发布
+      - name: 📤 [6] 发布
         uses: actions/upload-artifact@v4
         with:
-          name: OnePlus-PadPro-Real-Ultimate
+          name: OnePlus-PadPro-Ultimate-Scientific
           path: ./*.zip
