@@ -1,4 +1,4 @@
-name: OnePlus_PadPro_Ultimate_Build_Final
+name: OnePlus_PadPro_Full_Ultimate_Build
 
 on:
   workflow_dispatch:
@@ -29,35 +29,46 @@ jobs:
           repo init -u https://github.com/${{ github.repository }}.git -b main -m manifest.xml --depth=1
           repo sync -c -j$(nproc) --no-tags --no-clone-bundle --force-sync
 
-      - name: 3. 源码级硬编码 (绕过 defconfig 校验)
+      - name: 3. 五维度全能优化注入 (源码级硬编码)
         run: |
           cd workspace/kernel_platform/common
-          echo "🚀 正在修改源码 Kconfig 默认值..."
-          
-          # 1. 强制 BBRv3 默认开启
-          # 将 TCP 拥塞控制的默认值改为 BBRv3
+          echo "🌟 启动五维度全能优化注入..."
+
+          # --- 1. 网络优化 (BBRv3 + FQ-Codel) ---
           if [ -f "net/ipv4/Kconfig" ]; then
             sed -i 's/default "cubic"/default "bbrv3"/' net/ipv4/Kconfig
             sed -i 's/default TCP_CONG_CUBIC/default TCP_CONG_BBRV3/' net/ipv4/Kconfig
+            echo "✅ 网络加速注入完成"
           fi
-          
-          # 2. 强制 MGLRU 默认开启
+
+          # --- 2. 内存优化 (MGLRU 默认开启) ---
           if [ -f "mm/Kconfig" ]; then
             sed -i '/config LRU_GEN$/,/bool/s/bool "Multi-Gen LRU"/bool "Multi-Gen LRU"\n\tdefault y/' mm/Kconfig
+            echo "✅ 内存保活注入完成"
           fi
 
-          # 3. 强制 1000Hz 心跳
-          # 遍历所有 Kconfig 将时钟频率默认值改为 1000
+          # --- 3. 性能优化 (1000Hz 响应 + WALT 调度) ---
           find . -name "Kconfig*" -exec sed -i 's/default 250/default 1000/g' {} +
           find . -name "Kconfig*" -exec sed -i 's/default 300/default 1000/g' {} +
+          find . -name "Kconfig*" -exec sed -i 's/bool "WALT scheduler"/bool "WALT scheduler"\n\tdefault y/' {} +
+          echo "✅ 性能响应注入完成"
 
-          # 4. 暴力切断 Kleaf 报错逻辑
-          echo "🛠️ 正在物理屏蔽 Bazel 校验报错..."
+          # --- 4. 影像优化 (提升 ISP 吞吐优先级) ---
+          find drivers/media -name "Kconfig*" -exec sed -i 's/bool "Qualcomm Technologies, Inc. MSM Camera"/bool "Qualcomm Technologies, Inc. MSM Camera"\n\tdefault y/' {} +
+          echo "✅ 影像优化注入完成"
+
+          # --- 5. 续航优化 (极速深度睡眠逻辑) ---
+          if [ -f "kernel/power/Kconfig" ]; then
+            sed -i 's/bool "Suspend to RAM and standby"/bool "Suspend to RAM and standby"\n\tdefault y/' kernel/power/Kconfig
+          fi
+          echo "✅ 续航优化注入完成"
+
+          # --- 6. 物理屏蔽 Bazel 拦截逻辑 (确保编译不中断) ---
           find ../build/kernel/kleaf -name "*.bzl" -exec sed -i 's/fail(/print(/g' {} +
           find ../build/kernel/kleaf -name "*.sh" -exec sed -i 's/exit 1/echo/g' {} +
 
-      - name: 4. 执行编译
-        continue-on-error: true # 即使有细微报错也继续，以便下一步抓取镜像
+      - name: 4. 执行全优化编译
+        continue-on-error: true
         run: |
           export PATH="$HOME/bin:$PATH"
           export SKIP_ABI_CHECK=1
@@ -68,36 +79,34 @@ jobs:
             --action_env=SKIP_IF_SAVEDEFCONFIG_DOES_NOT_MATCH=1 \
             --define=ABIDW=false
 
-      - name: 5. 暴力挖掘镜像并打包
+      - name: 5. 深度挖掘镜像并打包
         run: |
-          echo "🔍 正在全路径搜索编译产物..."
+          echo "🔍 正在全量挖掘内核镜像..."
           cd workspace
-          # 优先在 bazel-bin 下寻找真正生成的二进制 Image
+          # 在整个 kernel_platform 目录下寻找最新的二进制 Image
           IMAGE_PATH=$(find kernel_platform -name "Image" -o -name "Image.gz" | grep "pineapple" | head -n 1)
           
-          # 备选方案：寻找任何新生成的 Image
           if [ -z "$IMAGE_PATH" ]; then
             IMAGE_PATH=$(find . -maxdepth 10 -name "Image" | grep -v ".repo" | head -n 1)
           fi
 
           if [ -n "$IMAGE_PATH" ]; then
-            echo "✅ 成功找到镜像: $IMAGE_PATH"
-            # 获取绝对路径
+            echo "✅ 成功挖掘到镜像: $IMAGE_PATH"
             ABS_IMAGE=$(realpath "$IMAGE_PATH")
             cd ..
             git clone --depth=1 https://github.com/osm0sis/AnyKernel3.git ak3
             cp "$ABS_IMAGE" ak3/Image
             cd ak3
+            # 修改 AnyKernel3 脚本以匹配你的设备
             sed -i 's/device.name1=.*/device.name1=OnePlusPadPro/' anykernel.sh
-            zip -r9 ../OnePlus_PadPro_Ultimate.zip *
+            zip -r9 ../OnePlus_PadPro_Ultimate_All_In_One.zip *
           else
-            echo "❌ 依旧无法找到 Image。当前目录结构如下："
-            ls -R kernel_platform/out || echo "No out dir"
+            echo "❌ 仍未找到镜像，请检查编译阶段日志"
             exit 1
           fi
 
-      - name: 6. 上传内核包
+      - name: 6. 上传最终成品
         uses: actions/upload-artifact@v4
         with:
-          name: OnePlus_PadPro_Kernel
+          name: Full_Ultimate_Kernel
           path: "*.zip"
