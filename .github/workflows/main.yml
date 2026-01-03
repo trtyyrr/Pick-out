@@ -95,16 +95,15 @@ jobs:
 
           echo "✅ 注入完成！Bazel 校验已物理绕过，所有优化已就绪。"
 
-      - name: 4. 执行全量编译
+     - name: 4. 执行全量编译 (Clang 20 模式)
         run: |
-          export PATH="$HOME/bin:$PATH"
+          export PATH="/usr/lib/llvm-20/bin:$HOME/bin:$PATH"
           export SKIP_ABI_CHECK=1
           export SKIP_IF_SAVEDEFCONFIG_DOES_NOT_MATCH=1
           export ABIDW=false
-          export KBUILD_BUILD_USER=trtyyrr
-          export KBUILD_BUILD_HOST=GitHubActions
           
           cd workspace
+          # 直接运行，Bazel 现在已经没有“报警器”了
           ${{ github.event.inputs.custom_command }}
 
       - name: 5. 暴力挖掘镜像并打包
