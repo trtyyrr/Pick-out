@@ -1,0 +1,39 @@
+name: Build OnePlus Pad Pro Kernel
+
+on:
+  workflow_dispatch: # 手动点击按钮启动
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Config
+        uses: actions/checkout@v4
+
+      - name: Setup Environment
+        run: |
+          sudo apt update
+          sudo apt install -y python3 python3-pip git openjdk-17-jdk
+          # 安装 Bazel 或其他编译依赖
+
+      - name: Sync Source (Read from nn.yml)
+        run: |
+          mkdir -p kernel_platform
+          cd kernel_platform
+          # 模拟从 nn.yml 获取地址并同步
+          git clone --depth 1 https://github.com/OnePlusOSS/android_kernel_oneplus_sm8650.git -b oneplus/sm8650_v_15.0.0_pad_pro msm-kernel
+          git clone --depth 1 https://github.com/OnePlusOSS/android_kernel_common_oneplus_sm8650.git -b oneplus/sm8650_v_15.0.0_pad_pro common
+          # 建立软链接
+          ln -sf msm-kernel/build_with_bazel.py build_with_bazel.py
+          ln -sf msm-kernel/bazel.WORKSPACE WORKSPACE
+
+      - name: Run Build
+        run: |
+          cd kernel_platform
+          python3 build_with_bazel.py -t pineapple gki
+
+      - name: Upload Kernel Image
+        uses: actions/upload-artifact@v4
+        with:
+          name: Kernel_Image
+          path: kernel_platform/out/msm-kernel-pineapple-gki/dist/Image.gz
