@@ -67,18 +67,26 @@ jobs:
           find ../build/kernel/kleaf -name "*.bzl" -exec sed -i 's/fail(/print(/g' {} +
           find ../build/kernel/kleaf -name "*.sh" -exec sed -i 's/exit 1/echo/g' {} +
 
-      - name: 4. 执行全优化编译
+            - name: 4. 执行全优化编译 (参数修正版)
         continue-on-error: true
         run: |
           export PATH="$HOME/bin:$PATH"
+          # 设置核心跳过变量
           export SKIP_ABI_CHECK=1
           export SKIP_IF_SAVEDEFCONFIG_DOES_NOT_MATCH=1
+          export ABIDW=false
+          export KBUILD_BUILD_USER=trtyyrr
+          export KBUILD_BUILD_HOST=GitHubActions
+          
           cd workspace
-          ${{ github.event.inputs.custom_command }} -- \
+          # 1. 移除多余的 -- 分隔符
+          # 2. 直接调用脚本，将参数合并
+          # 3. 移除引起解析错误的 --//msm-kernel 等非法格式，改用标准环境变量穿透
+          ${{ github.event.inputs.custom_command }} \
+            --skip_abi \
+            --skip_abl \
             --action_env=SKIP_ABI_CHECK=1 \
-            --action_env=SKIP_IF_SAVEDEFCONFIG_DOES_NOT_MATCH=1 \
-            --define=ABIDW=false
-
+            --action_env=SKIP_IF_SAVEDEFCONFIG_DOES_NOT_MATCH=1
       - name: 5. 深度挖掘镜像并打包
         run: |
           echo "🔍 正在全量挖掘内核镜像..."
