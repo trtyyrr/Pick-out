@@ -1,64 +1,14 @@
-name: OnePlus_Kernel_Factory
-
 on:
-  workflow_dispatch: # 支持手机端 gh 命令手动触发
-  push:
-    paths:
-      - 'nn.yml'   # 当你修改 nn.yml 时自动触发编译
+  workflow_dispatch:
+    inputs:
+      build_command:
+        description: '执行的编译命令'
+        default: 'python3 build_with_bazel.py -t pineapple gki'
 
 jobs:
-  build:
+  remote_build:
     runs-on: ubuntu-latest
-    
     steps:
-      - name: Checkout Config
-        uses: actions/checkout@v4
-
-      - name: Install System Dependencies
-        run: |
-          sudo apt update
-          sudo apt install -y python3 python3-pip git curl zip unzip tar
-          # 预装编译内核所需的库
-          sudo apt install -y build-essential bc flex bison libelf-dev libssl-dev
-
-      - name: Setup Kernel Platform
-        run: |
-          # 1. 强力解析 nn.yml
-          MSM_URL=$(grep "msm_kernel_url" nn.yml | cut -d ':' -f 2- | tr -d ' "')
-          COMMON_URL=$(grep "common_url" nn.yml | cut -d ':' -f 2- | tr -d ' "')
-          BRANCH=$(grep "branch" nn.yml | cut -d ':' -f 2- | tr -d ' "')
-          
-          echo "正在准备同步: $BRANCH"
-          
-          # 2. 创建目录结构
-          mkdir -p kernel_platform
-          cd kernel_platform
-          
-          # 3. 拉取源码 (depth 1 节省时间和空间)
-          git clone --depth 1 "$MSM_URL" -b "$BRANCH" msm-kernel
-          git clone --depth 1 "$COMMON_URL" -b "$BRANCH" common
-          
-          # 4. 建立一加固定的软链接
-          ln -sf msm-kernel/build_with_bazel.py build_with_bazel.py
-          ln -sf msm-kernel/bazel.WORKSPACE WORKSPACE
-          
-          # 5. 下载一加指定的 Bazel 二进制文件 (这是最容易报错的地方)
-          mkdir -p tools
-          curl -Lo tools/bazel https://github.com/bazelbuild/bazel/releases/download/6.4.0/bazel-6.4.0-linux-x86_64
-          chmod +x tools/bazel
-
-      - name: Execute Bazel Build
-        run: |
-          cd kernel_platform
-          # 设置环境变量，确保脚本能找到刚才下载的 bazel
-          export PATH=$PWD/tools:$PATH
-          # 执行编译：针对一加 Pad Pro (pineapple 平台)
-          python3 build_with_bazel.py -t pineapple gki
-
-      - name: Upload Kernel Artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: OnePlus_PadPro_Kernel
-          path: |
-            kernel_platform/out/msm-kernel-pineapple-gki/dist/Image*
-            kernel_platform/out/msm-kernel-pineapple-gki/dist/*.ko
+      - uses: actions/checkout@v4
+      - name: 执行终端传来的指令
+        run: ${{ github.event.inputs.build_command }}
