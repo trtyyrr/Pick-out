@@ -1,44 +1,15 @@
-name: OnePlus Pad Pro Kernel CI
-
-on:
-  workflow_dispatch: # 手动点击运行
-
-jobs:
-  build:
-    runs-on: ubuntu-latest
-    steps:
-      - name: 检出基础仓库
-        uses: actions/checkout@v4
-
-      - name: 配置构建环境
+      - name: 同步内核源码 (修正版)
         run: |
-          sudo apt-get update
-          sudo apt-get install -y git git-lfs python3 curl cpio
-          # 安装 Repo 工具
-          mkdir -p ~/bin
-          curl https://storage.googleapis.com/git-repo-downloads/repo > ~/bin/repo
-          chmod a+x ~/bin/repo
-          echo "$HOME/bin" >> $GITHUB_PATH
-
-      - name: 同步内核源码 (使用你的 nn.yml)
-        run: |
+          # 配置 Git 用户信息（Repo 必要要求）
+          git config --global user.email "you@example.com"
+          git config --global user.name "Your Name"
+          
           mkdir kernel_workspace && cd kernel_workspace
-          # 根据你的 nn.yml 初始化。如果 nn.yml 是本地文件，请确保路径正确
-          repo init -u ../ -m nn.yml 
-          repo sync -c -j$(nproc) --no-tags --force-sync
-
-      - name: 执行 Bazel (Kleaf) 编译
-        run: |
-          cd kernel_workspace
-          # 关键：限制内存和并行数，防止 GitHub Runner 崩溃
-          # 请确认 //msm-kernel:oneplus_pad_pro 是否为你清单里的正确 Target
-          ./tools/bazel run \
-            --local_ram_resources=HOST_RAM*.0.6 \
-            --local_cpu_resources=2 \
-            //msm-kernel:oneplus_pad_pro_dist -- --destdir=../out
-
-      - name: 上传编译产物
-        uses: actions/upload-artifact@v4
-        with:
-          name: Oneplus_Pad_Pro_Kernel
-          path: out/*
+          
+          # 1. 显式指定当前目录作为清单仓库 (-u ./)
+          # 2. 显式指定分支名（假设你的 GitHub 默认分支是 main）
+          # 3. 使用 --depth=1 加快速度
+          repo init -u ../ -b ${{ github.ref_name }} -m nn.yml
+          
+          # 同步代码
+          repo sync -c -j$(nproc) --no-tags --force-sync --no-clone-bundle
