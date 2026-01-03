@@ -32,10 +32,11 @@ jobs:
           repo init -u https://github.com/${{ github.repository }}.git -b main -m manifest.xml --depth=1
           repo sync -c -j$(nproc) --no-tags --no-clone-bundle --force-sync || repo sync -c -j1 --force-sync
 
-      - name: 4. 注入极致优化配置
+      - name: 4. 注入极致优化配置 (修复版)
         run: |
           CONF_PATH="workspace/kernel_platform/common/arch/arm64/configs/gki_defconfig"
           if [ -f "$CONF_PATH" ]; then
+            # 清理旧项
             sed -i '/CONFIG_TCP_CONG_BBR/d' "$CONF_PATH"
             sed -i '/CONFIG_NET_SCH_FQ/d' "$CONF_PATH"
             sed -i '/CONFIG_LRU_GEN/d' "$CONF_PATH"
@@ -43,45 +44,60 @@ jobs:
             sed -i '/CONFIG_SCHED_WALT/d' "$CONF_PATH"
             sed -i '/CONFIG_TCP_CONG_ADVANCED/d' "$CONF_PATH"
             sed -i '/CONFIG_DEBUG_KERNEL/d' "$CONF_PATH"
+            # 写入优化项
             cat >> "$CONF_PATH" <<EOF
-          CONFIG_TCP_CONG_ADVANCED=y
-          CONFIG_TCP_CONG_BBR=y
-          CONFIG_TCP_CONG_BBRV3=y
-          CONFIG_NET_SCH_FQ=y
-          CONFIG_NET_SCH_FQ_CODEL=y
-          CONFIG_LRU_GEN=y
-          CONFIG_LRU_GEN_ENABLED=y
-          CONFIG_HZ_1000=y
-          CONFIG_SCHED_WALT=y
-          CONFIG_DEBUG_KERNEL=n
-          EOF
+CONFIG_TCP_CONG_ADVANCED=y
+CONFIG_TCP_CONG_BBR=y
+CONFIG_TCP_CONG_BBRV3=y
+CONFIG_NET_SCH_FQ=y
+CONFIG_NET_SCH_FQ_CODEL=y
+CONFIG_LRU_GEN=y
+CONFIG_LRU_GEN_ENABLED=y
+CONFIG_HZ_1000=y
+CONFIG_SCHED_WALT=y
+CONFIG_DEBUG_KERNEL=n
+EOF
           fi
 
-      - name: 5. 编译准备与赋权
+      - name: 5. 脚本赋权
         run: |
           cd workspace
           find kernel_platform -name "*.sh" -exec chmod +x {} +
           find kernel_platform -name "bazel" -exec chmod +x {} +
           [ -f kernel_platform/build_with_bazel.py ] && chmod +x kernel_platform/build_with_bazel.py
 
-      - name: 6. 运行编译
+      - name: 6. 运行编译 (使用环境变量绕过解析错误)
         run: |
           export PATH="$HOME/bin:$PATH"
+          
+          # 核心：通过 export 注入，而不是在命令行后面加参数
           export SKIP_ABI_CHECK=1
           export SKIP_IF_SAVEDEFCONFIG_DOES_NOT_MATCH=1
+          export KBUILD_BUILD_USER=trtyyrr
+          export KBUILD_BUILD_HOST=GitHubActions
+          export ABIDW=false
+          
           cd workspace
-          ${{ github.event.inputs.custom_command }} -- --action_env=SKIP_ABI_CHECK=1 --action_env=SKIP_IF_SAVEDEFCONFIG_DOES_NOT_MATCH=1 --define=ABIDW=false
+          # 直接运行指令，不再添加 -- 后缀
+          ${{ github.event.inputs.custom_command }}
 
       - name: 7. 打包内核镜像
         if: success()
         run: |
+          # 尝试定位镜像文件
           KERNEL_IMAGE=$(find workspace/out -name "Image.gz" | head -n 1)
           [ -z "$KERNEL_IMAGE" ] && KERNEL_IMAGE=$(find workspace/out -name "Image" | head -n 1)
-          git clone --depth=1 https://github.com/osm0sis/AnyKernel3.git ak3
-          cp "$KERNEL_IMAGE" ak3/
-          cd ak3
-          sed -i 's/device.name1=.*/device.name1=OnePlusPadPro/' anykernel.sh
-          zip -r9 ../OnePlus_PadPro_Ultimate.zip *
+          
+          if [ -f "$KERNEL_IMAGE" ]; then
+            git clone --depth=1 https://github.com/osm0sis/AnyKernel3.git ak3
+            cp "$KERNEL_IMAGE" ak3/
+            cd ak3
+            sed -i 's/device.name1=.*/device.name1=OnePlusPadPro/' anykernel.sh
+            zip -r9 ../OnePlus_PadPro_Optimized.zip *
+          else
+            echo "❌ 未找到镜像"
+            exit 1
+          fi
 
       - name: 8. 上传成品
         if: success()
