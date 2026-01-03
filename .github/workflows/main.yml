@@ -12,10 +12,9 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-- name: 🚀 极致内存脱水与 30GB 虚拟空间扩容
-  run: |
-    echo "========= 初始状态 ========="
-    free -h && df -h
+    - name: 🚀 极致内存脱水与 30GB 虚拟空间
+      run: |
+      free -h && df -h
 
     # 1. 暴力删除预装环境 (释放约 30GB-40GB 磁盘空间)
     # 删掉 Android SDK, .NET, Haskell, CodeQL 等大型预装包
