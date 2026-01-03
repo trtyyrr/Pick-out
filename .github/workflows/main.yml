@@ -12,34 +12,51 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout Config
+      - name: Checkout Manifest
         uses: actions/checkout@v4
+
+      - name: Configure Git & Token
+        run: |
+          # 注入你的 Token，防止同步源码时权限报错
+          git config --global user.email "bot@github.com"
+          git config --global user.name "KernelBot"
+          git config --global url."https://${{ secrets.GITHUB_TOKEN }}@github.com/".insteadOf "https://github.com/"
 
       - name: Install Repo Tool
         run: |
           mkdir -p ~/bin
           curl https://storage.googleapis.com/git-repo-downloads/repo > ~/bin/repo
           chmod a+x ~/bin/repo
-          echo "PATH=$HOME/bin:$PATH" >> $GITHUB_ENV
+          echo "$HOME/bin" >> $GITHUB_PATH
 
       - name: Sync Source (Using Manifest)
         run: |
-          export PATH=$HOME/bin:$PATH
-          # 1. 初始化 repo (使用你提供的 Manifest)
           mkdir -p workspace && cd workspace
-          repo init -u https://github.com/trtyyrr/Pick-out.git -b main -m manifest.xml
+          # 初始化。注意：这里假设你的 manifest.xml 就在本仓库根目录
+          repo init -u https://github.com/${{ github.repository }}.git -b main -m manifest.xml
           
-          # 2. 同步源码 (由于 sm8650 很大，使用 -c 和 -j 优化)
-          repo sync -c -j$(nproc) --no-tags --no-clone-bundle
+          # 同步源码。使用 --no-clone-bundle 减少权限验证环节
+          repo sync -c -j$(nproc) --no-tags --no-clone-bundle --force-sync
+
+      - name: Fix Execution Permissions
+        run: |
+          # 核心步骤：给所有的脚本和工具链加上执行权限，防止“Permission Denied”
+          cd workspace
+          find kernel_platform -name "*.sh" -exec chmod +x {} +
+          find kernel_platform -name "bazel" -exec chmod +x {} +
+          chmod +x kernel_platform/build_with_bazel.py
 
       - name: Execute Custom Command
         run: |
           cd workspace
-          # 执行你从终端传过来的指令
+          # 执行终端指令
           ${{ github.event.inputs.custom_command }}
 
       - name: Upload Result
+        if: success()
         uses: actions/upload-artifact@v4
         with:
           name: OnePlus_PadPro_Kernel
-          path: workspace/out/*/dist/Image*
+          path: |
+            workspace/out/*/dist/Image*
+            workspace/out/*/dist/*.ko
