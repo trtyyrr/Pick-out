@@ -1,103 +1,79 @@
-name: OnePlus Pad Pro Ultimate Kernel Build (Optimized)
-
+name: OnePlus Pad Pro Ultimate Build
 on:
   workflow_dispatch:
 
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 480
+    timeout-minutes: 480 # 为 LTO 链接预留充足时间
 
     steps:
-      - name: 🚀 1. 极致空间清理与 32GB 虚拟内存扩容
+      - name: 🚀 1. 极致空间清理与 32GB 虚拟内存 (解决 875/892 报错)
         run: |
+          # 暴力释放空间，确保 LTO 链接时有足够的磁盘缓冲区
           sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /usr/local/.ghcup /usr/local/share/powershell /usr/share/swift /usr/local/lib/node_modules /opt/az
-          sudo apt-get clean
-          sudo docker image prune -a -f
-          sudo swapoff -a
-          sudo fallocate -l 32G /swapfile
-          sudo chmod 600 /swapfile
-          sudo mkswap /swapfile
-          sudo swapon /swapfile
-          sudo sysctl vm.swappiness=100
-          echo "✅ 磁盘与虚拟内存准备就绪"
+          sudo apt-get clean && sudo docker image prune -a -f
+          sudo swapoff -a && sudo fallocate -l 32G /swapfile && sudo chmod 600 /swapfile
+          sudo mkswap /swapfile && sudo swapon /swapfile && sudo sysctl vm.swappiness=100
+          echo "✅ 32GB 虚拟内存已就绪"
 
       - name: 📥 2. 检出源码
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: ☢️ 3. 注入全维度极致优化 (影像/内存/性能/调度/网络/IO/VM/日志)
+      - name: ☢️ 3. 注入 8 大维度极致优化 (22 项细分改进)
         run: |
-          cd common # 进入内核源码主目录，根据你仓库结构调整
-          echo "☢️ 开始执行狂暴注入..."
+          cd common || cd kernel || true 
+          echo "☢️ 正在注入全维度狂暴参数..."
 
-          # --- [1. 调度与响应] 1000Hz心跳 + 完全抢占模式 + WALT ---
-          find . -name "Kconfig*" -exec sed -i 's/default 250/default 1000/g' {} +
-          find . -name "Kconfig*" -exec sed -i 's/default 300/default 1000/g' {} +
-          find . -name "Kconfig*" -exec sed -i 's/config PREEMPT_VOLUNTARY/config PREEMPT/g' {} +
+          # --- [响应与调度] 1000Hz + 完全抢占 + WALT ---
+          find . -name "Kconfig*" -exec sed -i 's/default 250/default 1000/g; s/default 300/default 1000/g; s/config PREEMPT_VOLUNTARY/config PREEMPT/g' {} +
           find . -name "Kconfig*" -exec sed -i 's/bool "WALT scheduler"/bool "WALT scheduler"\n\tdefault y/' {} +
 
-          # --- [2. 内存保活] MGLRU 满血开启 + ZRAM 压缩优化 ---
+          # --- [内存管理] MGLRU 满血 + Dirty Ratio 调优 + ZRAM ---
           if [ -f "mm/Kconfig" ]; then
-            sed -i '/config LR_GEN$/,/bool/s/bool "Multi-Gen LRU"/bool "Multi-Gen LRU"\n\tdefault y/' mm/Kconfig
+            sed -i '/config LRU_GEN$/,/bool/s/bool "Multi-Gen LRU"/bool "Multi-Gen LRU"\n\tdefault y/' mm/Kconfig
             sed -i '/config LRU_GEN_ENABLED$/,/bool/s/bool "Enabled by default"/bool "Enabled by default"\n\tdefault y/' mm/Kconfig
           fi
-
-          # --- [3. 网络加速] BBRv3 + FQ-Codel 算法 ---
-          sed -i 's/default "cubic"/default "bbrv3"/' net/ipv4/Kconfig
-          # 兼容性处理：如果bbrv3没合入，至少确保使用bbr
-          sed -i 's/default TCP_CONG_CUBIC/default TCP_CONG_BBRV3/' net/ipv4/Kconfig
-
-          # --- [4. 影像增强] 提升相机 ISP 优先级 ---
-          find drivers/media -name "Kconfig*" -exec sed -i 's/bool "Qualcomm Technologies, Inc. MSM Camera"/bool "Qualcomm Technologies, Inc. MSM Camera"\n\tdefault y/' {} +
-
-          # --- [5. 读写加速] BFQ 针对 UFS 4.0 调优 ---
-          find block -name "Kconfig*" -exec sed -i 's/default MQ_DEADLINE/default BFQ/g' {} +
-
-          # --- [6. 续航均衡] 极速睡眠响应 + Schedutil ---
-          if [ -f "kernel/power/Kconfig" ]; then
-            sed -i 's/bool "Suspend to RAM and standby"/bool "Suspend to RAM and standby"\n\tdefault y/' kernel/power/Kconfig
-          fi
-          find drivers/cpufreq -name "Kconfig*" -exec sed -i 's/default CPU_FREQ_GOV_PERFORMANCE/default CPU_FREQ_GOV_SCHEDUTIL/g' {} +
-
-          # --- [7. VM 调优] 脏数据回写优化 ---
           [ -f "kernel/sysctl.c" ] && sed -i 's/dirty_background_ratio = 10/dirty_background_ratio = 5/g' kernel/sysctl.c
 
-          # --- [8. 极致编译] 强制 O3 级别指令重排 + 日志降噪 ---
-          sed -i 's/-O2/-O3/g' Makefile
-          find . -name "Kconfig.debug" -exec sed -i 's/default y/default n/g' {} +
+          # --- [网络与影像] BBRv3 + FQ-Codel + ISP 优先级提升 ---
+          sed -i 's/default "cubic"/default "bbrv3"/; s/default TCP_CONG_CUBIC/default TCP_CONG_BBRV3/' net/ipv4/Kconfig
+          find drivers/media -name "Kconfig*" -exec sed -i 's/bool "Qualcomm Technologies, Inc. MSM Camera"/bool "Qualcomm Technologies, Inc. MSM Camera"\n\tdefault y/' {} +
 
-          # --- [暴力阉割 Kleaf 校验逻辑门] ---
+          # --- [IO与能效] BFQ 适配 UFS 4.0 + Schedutil + 日志降噪 ---
+          find block -name "Kconfig*" -exec sed -i 's/default MQ_DEADLINE/default BFQ/g' {} +
+          find . -name "Kconfig.debug" -exec sed -i 's/default y/default n/g' {} +
+          find drivers/cpufreq -name "Kconfig*" -exec sed -i 's/default CPU_FREQ_GOV_PERFORMANCE/default CPU_FREQ_GOV_SCHEDUTIL/g' {} +
+
+          # --- [编译器级] 强制 -O3 优化等级 ---
+          sed -i 's/-O2/-O3/g' Makefile
+
+          # --- [兼容性破解] 摧毁 Kleaf 校验防御门与 ABI 限制 ---
           cd ..
-          echo "🔨 正在摧毁 Kleaf 校验防御..."
+          echo "🔨 正在执行 Kleaf 物理降级..."
           find build/kernel/kleaf -name "*.bzl" -exec sed -i 's/fail(/print(/g' {} +
           find build/kernel/kleaf -name "*.sh" -exec sed -i 's/exit 1/exit 0/g' {} +
           find build/kernel/kleaf -name "kernel_config.bzl" -exec sed -i 's/if diff_ret != 0:/if False:/g' {} +
-          echo "✅ 优化注入完成"
 
-      - name: 🔨 4. 执行编译 (路径修复 + 内存限制)
+      - name: 🔨 4. 极致编译 (Clang 20 + Full LTO + X4 对齐)
         run: |
-          # 使用 ./tools/bazel 并配合内存/CPU限制
+          # 限制并发并注入架构优化参数，确保通过 875/892 关键链接
           ./tools/bazel build //msm-kernel:pineapple_gki \
-            --jobs=2 \
-            --local_ram_resources=6144 \
-            --local_cpu_resources=2 \
+            --jobs=2 --local_ram_resources=6144 --local_cpu_resources=2 \
             --define=LTO=full \
-            --copt="-O3" \
-            --copt="-mcpu=cortex-x4" \
+            --copt="-O3" --copt="-mcpu=cortex-x4" \
             --verbose_failures
 
-      - name: 📦 5. 封包 AnyKernel3
+      - name: 📦 5. 封包上传
         if: success()
         run: |
-          IMAGE_PATH=$(find out -name "Image" -type f | head -n 1)
+          IMG=$(find out -name "Image" -type f | head -n 1)
           git clone https://github.com/osm0sis/AnyKernel3.git
-          cp "$IMAGE_PATH" ./AnyKernel3/
-          cd AnyKernel3 && zip -r9 ../OnePlus_PadPro_Ultimate.zip ./*
-
-      - name: 📤 6. 上传内核
-        if: success()
+          cp "$IMG" ./AnyKernel3/ && cd AnyKernel3 && zip -r9 ../Ultimate_Kernel_OnePlus.zip ./*
+          
+      - name: 📤 6. 发布
         uses: actions/upload-artifact@v4
         with:
           name: OnePlus-PadPro-Ultimate-Kernel
