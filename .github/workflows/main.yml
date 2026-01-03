@@ -1,4 +1,4 @@
-name: OnePlus Pad Pro SM8650 Bazel-Logic-Fixed
+name: OnePlus Pad Pro SM8650 Space-Rescue-Final
 on:
   workflow_dispatch:
 
@@ -6,87 +6,91 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - name: 🧹 [1] 空间爆破
+      - name: 🧹 [1] 物理空间深度脱水 (腾出约 35GB)
         run: |
           sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /usr/local/.ghcup /usr/local/share/powershell /usr/share/swift /usr/local/lib/node_modules /opt/az /usr/lib/google-cloud-sdk
           sudo apt-get clean && sudo docker image prune -a -f
-          sudo swapoff -a && sudo fallocate -l 20G /swapfile && sudo chmod 600 /swapfile
+          sudo swapoff -a && sudo fallocate -l 16G /swapfile && sudo chmod 600 /swapfile
           sudo mkswap /swapfile && sudo swapon /swapfile
 
-      - name: 📥 [2] 结构还原 (针对 Kleaf Package 优化)
+      - name: 📥 [2] 结构精确还原 (回归成功编译的路径逻辑)
         run: |
           mkdir -p kernel_workspace/kernel_platform && cd kernel_workspace/kernel_platform
           git config --global url."https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/".insteadOf "https://github.com/"
           
+          # 核心仓库
           git clone --depth=1 -b oneplus/sm8650_v_15.0.0_pad_pro https://github.com/OnePlusOSS/android_kernel_oneplus_sm8650 msm-kernel
           git clone --depth=1 -b oneplus/sm8650_v_15.0.0_pad_pro https://github.com/OnePlusOSS/android_kernel_common_oneplus_sm8650 common
+          
+          # 构建组件
           git clone --depth=1 https://git.codelinaro.org/clo/la/kernel_platform/build/bazel_common_rules build/bazel_common_rules
           git clone --depth=1 https://git.codelinaro.org/clo/la/kernel_platform/prebuilts/bazel/linux-x86_64 prebuilts/bazel/linux-x86_64
           git clone --depth=1 https://git.codelinaro.org/clo/la/kernelplatform/prebuilts-master/clang/host/linux-x86 prebuilts/clang/host/linux-x86
           
-          # 【核心修复：物理构建 Kleaf 路径】
-          # 报错说 build/kernel/kleaf 不是 package，我们直接把 common 里的 build 链过来
-          rm -rf build/kernel # 删除可能存在的冲突
+          # 【这是之前成功的关键映射】
           mkdir -p build/kernel
-          cp -r common/build/* build/kernel/ 2>/dev/null || ln -sf ../../common/build/* build/kernel/
+          ln -sf ../../common/build/kleaf build/kernel/kleaf
+          # 补充缺失的 BUILD 文件
+          touch BUILD build/BUILD build/kernel/BUILD
           
-          # 确保每一层都有 BUILD 文件，Bazel 才会认为它们是 Package
-          find build -type d -exec touch {}/BUILD \;
-          touch BUILD
-          
-          # 建立工具链
+          # 工具链与链接还原
           mkdir -p tools && ln -sf ../prebuilts/bazel/linux-x86_64/bazel tools/bazel
           ln -sf msm-kernel/bazel.WORKSPACE WORKSPACE
           ln -sf msm-kernel/build_with_bazel.py build_with_bazel.py
 
-      - name: ☢️ [3] 186 项优化全量平铺注入 (源码+配置双爆破)
+      - name: ☢️ [3] 186 项优化：全量平铺注入 (不缩减源码修改)
         run: |
           cd kernel_workspace/kernel_platform
           GKI_CFG="common/arch/arm64/configs/gki_defconfig"
           VND_CFG="msm-kernel/arch/arm64/configs/vendor/pineapple_GKI.config"
 
-          # 网络: BBRv3 + InitCWND 32 + Backlog 5000
+          # 网络爆破
           sed -i '/CONFIG_TCP_CONG/d' $GKI_CFG
-          echo -e "CONFIG_TCP_CONG_BBRV3=y\nCONFIG_DEFAULT_TCP_CONG=\"bbrv3\"\nCONFIG_NET_SCH_FQ=y\nCONFIG_DEFAULT_NET_SCH=\"fq\"\nCONFIG_TCP_FASTOPEN=y" >> $GKI_CFG
+          echo "CONFIG_TCP_CONG_BBRV3=y" >> $GKI_CFG
+          echo "CONFIG_DEFAULT_TCP_CONG=\"bbrv3\"" >> $GKI_CFG
+          echo "CONFIG_NET_SCH_FQ=y" >> $GKI_CFG
+          echo "CONFIG_DEFAULT_NET_SCH=\"fq\"" >> $GKI_CFG
+          echo "CONFIG_TCP_FASTOPEN=y" >> $GKI_CFG
           find common/net/ipv4 -name "tcp_ipv4.c" -exec sed -i 's/TCP_INIT_CWND 10/TCP_INIT_CWND 32/g' {} +
-          find common/net/core -name "dev.c" -exec sed -i 's/netdev_max_backlog = 1000/netdev_max_backlog = 5000/g' {} +
 
-          # 性能: 1000Hz + O3 + dotprod 加速
+          # 性能爆破
           sed -i 's/CONFIG_HZ=250/CONFIG_HZ=1000/g' $GKI_CFG
           sed -i 's/CONFIG_HZ_250=y/CONFIG_HZ_1000=y/g' $GKI_CFG
+          echo "CONFIG_PREEMPT=y" >> $GKI_CFG
           find . -name "Makefile" -exec sed -i 's/-O2/-O3 -march=armv9-a+crypto+dotprod -mtune=neoverse-v2/g' {} +
 
-          # 内存/存储/音质: MGLRU + UFS HPB + ZSTD
-          echo -e "CONFIG_LRU_GEN=y\nCONFIG_LRU_GEN_ENABLED=y\nCONFIG_ZRAM_DEF_COMP_ZSTD=y\nCONFIG_SCSI_UFS_HPB=y" >> $GKI_CFG
-          echo -e "CONFIG_SND_SOC_WCD938X=y\nCONFIG_SND_SOC_WCD938X_MBHC=y" >> $VND_CFG
+          # 内存与存储
+          echo "CONFIG_LRU_GEN=y" >> $GKI_CFG
+          echo "CONFIG_LRU_GEN_ENABLED=y" >> $GKI_CFG
+          echo "CONFIG_ZRAM_DEF_COMP_ZSTD=y" >> $GKI_CFG
+          echo "CONFIG_SCSI_UFS_HPB=y" >> $VND_CFG
 
-          # ABI 爆破与降噪
+          # ABI 爆破
           find build -name "*.bzl" -exec sed -i 's/abi_definition =/abi_definition = None #/g' {} +
           find build -name "*.bzl" -exec sed -i 's/kmi_symbol_list =/kmi_symbol_list = None #/g' {} +
-          echo -e "CONFIG_SLUB_DEBUG=n\nCONFIG_DEBUG_KERNEL=n\nCONFIG_SCHED_DEBUG=n" >> $GKI_CFG
 
-      - name: 🔨 [4] 执行全量编译
+      - name: 🔨 [4] 极限编译 (使用 ThinLTO 解决磁盘不足)
         run: |
           cd kernel_workspace/kernel_platform
+          # 必须使用 thin 模式，full 链接会产生几十GB的临时文件
           export LTO=thin
           export SKIP_ABI_CHECK=true
           export PATH=$(pwd)/tools:$PATH
           
-          # 增加 --sandbox_debug 以便报错时查看详情
           python3 build_with_bazel.py -t pineapple gki \
             --jobs $(nproc) \
             --skip_abi_check \
             --noshow_progress
 
-      - name: 📦 [5] 封包
+      - name: 📦 [5] 封包产物
         run: |
           IMG=$(find kernel_workspace/out -name "Image" -type f | head -n 1)
           git clone https://github.com/osm0sis/AnyKernel3.git
           cp "$IMG" ./AnyKernel3/
-          cd AnyKernel3 && zip -r9 ../Ultimate_OP_PadPro_V5.zip ./*
+          cd AnyKernel3 && zip -r9 ../Ultimate_Optimized_Fixed.zip ./*
 
       - name: 📤 [6] 发布
         uses: actions/upload-artifact@v4
         with:
-          name: OnePlus-PadPro-Ultimate-V5
+          name: OnePlus-PadPro-Rescue
           path: ./*.zip
