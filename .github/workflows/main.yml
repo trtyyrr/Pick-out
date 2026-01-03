@@ -1,4 +1,4 @@
-name: OnePlus_PadPro_Official_Ultimate_Force
+name: OnePlus_PadPro_Ultimate_Build
 
 on:
   workflow_dispatch:
@@ -12,15 +12,15 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - name: 1. 极致磁盘清理
+      - name: 1. 清理磁盘空间
         run: |
           sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc "/usr/local/share/boost" "$AGENT_TOOLSDIRECTORY"
           df -h
 
-      - name: 2. 检出配置
+      - name: 2. 检出仓库代码
         uses: actions/checkout@v4
 
-      - name: 3. 安装工具并同步官方源码
+      - name: 3. 安装工具并同步源码
         run: |
           git config --global user.email "bot@github.com"
           git config --global user.name "KernelBot"
@@ -32,14 +32,12 @@ jobs:
           repo init -u https://github.com/${{ github.repository }}.git -b main -m manifest.xml --depth=1
           repo sync -c -j$(nproc) --no-tags --no-clone-bundle --force-sync || repo sync -c -j1 --force-sync
 
-      - name: 4. 激活优化并规避校验
+      - name: 4. 注入极致优化配置
         run: |
           CONF_PATH="workspace/kernel_platform/common/arch/arm64/configs/gki_defconfig"
-          
           if [ -f "$CONF_PATH" ]; then
-            echo "🚀 正在清理并注入极致优化..."
-            
-            # 先清除所有冲突项
+            echo "🚀 正在优化 defconfig..."
+            # 删除旧配置项避免重复
             sed -i '/CONFIG_TCP_CONG_BBR/d' "$CONF_PATH"
             sed -i '/CONFIG_NET_SCH_FQ/d' "$CONF_PATH"
             sed -i '/CONFIG_LRU_GEN/d' "$CONF_PATH"
@@ -47,8 +45,7 @@ jobs:
             sed -i '/CONFIG_SCHED_WALT/d' "$CONF_PATH"
             sed -i '/CONFIG_TCP_CONG_ADVANCED/d' "$CONF_PATH"
             sed -i '/CONFIG_DEBUG_KERNEL/d' "$CONF_PATH"
-
-            # 精准注入配置 (纯净格式)
+            # 写入新优化项
             cat >> "$CONF_PATH" <<EOF
 CONFIG_TCP_CONG_ADVANCED=y
 CONFIG_TCP_CONG_BBR=y
@@ -62,40 +59,37 @@ CONFIG_SCHED_WALT=y
 CONFIG_DEBUG_KERNEL=n
 EOF
           else
-            echo "⚠️ 未找到 gki_defconfig"
+            echo "❌ 错误: 未找到配置文件"
             exit 1
           fi
 
-      - name: 5. 编译准备与赋权
+      - name: 5. 脚本赋权
         run: |
           cd workspace
           find kernel_platform -name "*.sh" -exec chmod +x {} +
           find kernel_platform -name "bazel" -exec chmod +x {} +
           [ -f kernel_platform/build_with_bazel.py ] && chmod +x kernel_platform/build_with_bazel.py
 
-      - name: 6. 执行 Bazel 编译
+      - name: 6. 运行 Bazel 编译 (强制关闭校验)
         run: |
           export PATH="$HOME/bin:$PATH"
           cd workspace
-          
-          # 设置跳过所有校验的环境变量
+          # 定义跳过校验的环境变量
           export SKIP_ABI_CHECK=1
           export SKIP_IF_SAVEDEFCONFIG_DOES_NOT_MATCH=1
           export KBUILD_BUILD_USER=trtyyrr
           export KBUILD_BUILD_HOST=GitHubActions
-
-          # 启动编译，通过 --action_env 穿透沙盒
+          # 执行编译指令并透传参数给 Bazel 沙盒
           ${{ github.event.inputs.custom_command }} -- \
             --action_env=SKIP_ABI_CHECK=1 \
             --action_env=SKIP_IF_SAVEDEFCONFIG_DOES_NOT_MATCH=1 \
             --define=ABIDW=false
 
-      - name: 7. 自动化 AnyKernel3 打包
+      - name: 7. 打包内核镜像
         if: success()
         run: |
           KERNEL_IMAGE=$(find workspace/out -name "Image.gz" | head -n 1)
           [ -z "$KERNEL_IMAGE" ] && KERNEL_IMAGE=$(find workspace/out -name "Image" | head -n 1)
-          
           if [ -f "$KERNEL_IMAGE" ]; then
             git clone --depth=1 https://github.com/osm0sis/AnyKernel3.git ak3
             cp "$KERNEL_IMAGE" ak3/
@@ -103,26 +97,25 @@ EOF
             sed -i 's/device.name1=.*/device.name1=OnePlusPadPro/' anykernel.sh
             zip -r9 ../OnePlus_PadPro_Ultimate_Optimized.zip *
           else
-            echo "❌ 编译可能成功但未找到镜像文件"
+            echo "❌ 错误: 未发现生成的内核镜像文件"
             exit 1
           fi
-          
-      - name: 8. 上传成品
+
+      - name: 8. 上传 Artifacts
         if: success()
         uses: actions/upload-artifact@v4
         with:
           name: Optimized_Kernel_Final
           path: "*.zip"
 
-      - name: 9. 失败诊断
+      - name: 9. 编译失败诊断
         if: failure()
         run: |
-          # 仅在失败时打包日志，避免占用空间
-          tar -czf debug_info.tar.gz --exclude='workspace/.repo' --exclude='workspace/out' workspace/kernel_platform/common/arch/arm64/configs/gki_defconfig || true
-          
-      - name: 10. 上传诊断包
+          tar -czf debug_logs.tar.gz --exclude='workspace/.repo' --exclude='workspace/out' workspace/kernel_platform/common/arch/arm64/configs/gki_defconfig || true
+
+      - name: 10. 上传错误日志
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: Debug_Log
-          path: debug_info.tar.gz
+          name: Failure_Debug_Log
+          path: debug_logs.tar.gz
