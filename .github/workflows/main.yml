@@ -40,13 +40,18 @@ jobs:
           chmod a+x ~/bin/repo
           echo "$HOME/bin" >> $GITHUB_PATH
 
-      - name: Sync Source
+            - name: Sync Source
         run: |
           mkdir -p workspace && cd workspace
-          # 初始化 Manifest (确保你的 manifest.xml 在仓库根目录)
-          repo init -u https://github.com/${{ github.repository }}.git -b main -m manifest.xml
-          # --depth=1 是防止磁盘爆满的关键
-          repo sync -c -j$(nproc) --no-tags --no-clone-bundle --force-sync --depth=1
+          # 1. 在 init 阶段就指定 --depth=1
+          repo init -u https://github.com/${{ github.repository }}.git \
+                    -b main \
+                    -m manifest.xml \
+                    --depth=1
+          
+          # 2. sync 阶段移除 --depth 参数，改用更兼容的写法
+          # -j$(nproc) 利用多核加速，--force-sync 确保清理旧残留
+          repo sync -c -j$(nproc) --no-tags --no-clone-bundle --force-sync
 
       - name: Fix Execution Permissions
         run: |
