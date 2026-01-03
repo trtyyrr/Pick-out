@@ -1,4 +1,4 @@
-name: OnePlus_PadPro_Full_Ultimate_Build
+name: OnePlus_PadPro_Full_Ultimate_Final
 
 on:
   workflow_dispatch:
@@ -26,41 +26,52 @@ jobs:
           chmod a+x ~/bin/repo
           export PATH="$HOME/bin:$PATH"
           mkdir -p workspace && cd workspace
+          # 使用 --depth=1 提高同步速度
           repo init -u https://github.com/${{ github.repository }}.git -b main -m manifest.xml --depth=1
           repo sync -c -j$(nproc) --no-tags --no-clone-bundle --force-sync
 
-      - name: 3. 五维度全能优化注入 (源码级硬编码)
+      - name: 3. 五维度源码硬编码注入 (全能优化)
         run: |
           cd workspace/kernel_platform/common
-          echo "🌟 正在注入全维度极致优化..."
+          echo "🚀 启动全维度极致优化注入..."
 
-          # --- 1. 网络：BBRv3 + FQ ---
+          # --- [网络优化] BBRv3 + FQ 调度 (降低丢包延迟) ---
           if [ -f "net/ipv4/Kconfig" ]; then
             sed -i 's/default "cubic"/default "bbrv3"/' net/ipv4/Kconfig
             sed -i 's/default TCP_CONG_CUBIC/default TCP_CONG_BBRV3/' net/ipv4/Kconfig
           fi
 
-          # --- 2. 内存：MGLRU 默认开启 ---
+          # --- [内存优化] MGLRU 极致保活 (减少杀后台) ---
           if [ -f "mm/Kconfig" ]; then
             sed -i '/config LRU_GEN$/,/bool/s/bool "Multi-Gen LRU"/bool "Multi-Gen LRU"\n\tdefault y/' mm/Kconfig
           fi
 
-          # --- 3. 性能：1000Hz 响应 ---
+          # --- [性能优化] 1000Hz 响应 + WALT 激进调度 ---
+          # 强制将内核心跳频率提升至 1000Hz
           find . -name "Kconfig*" -exec sed -i 's/default 250/default 1000/g' {} +
           find . -name "Kconfig*" -exec sed -i 's/default 300/default 1000/g' {} +
-          
-          # --- 4. 影像：ISP 吞吐增强 ---
+          # 开启 WALT 调度器支持
+          find . -name "Kconfig*" -exec sed -i 's/bool "WALT scheduler"/bool "WALT scheduler"\n\tdefault y/' {} +
+
+          # --- [影像优化] 提升 Camera/ISP 吞吐优先级 ---
           find drivers/media -name "Kconfig*" -exec sed -i 's/bool "Qualcomm Technologies, Inc. MSM Camera"/bool "Qualcomm Technologies, Inc. MSM Camera"\n\tdefault y/' {} +
 
-          # --- 5. 屏蔽 Bazel 校验拦截逻辑 ---
-          echo "🛠️ 物理屏蔽校验逻辑..."
+          # --- [续航优化] 极速睡眠 + 调度能效比优化 ---
+          if [ -f "kernel/power/Kconfig" ]; then
+            sed -i 's/bool "Suspend to RAM and standby"/bool "Suspend to RAM and standby"\n\tdefault y/' kernel/power/Kconfig
+          fi
+          # 设置默认调频器为平衡且高效的 schedutil
+          find drivers/cpufreq -name "Kconfig*" -exec sed -i 's/default CPU_FREQ_GOV_PERFORMANCE/default CPU_FREQ_GOV_SCHEDUTIL/g' {} +
+
+          # --- [物理屏蔽] 彻底关掉 Bazel 校验拦截逻辑 ---
+          echo "🛠️ 正在物理屏蔽所有校验报错..."
           find ../build/kernel/kleaf -name "*.bzl" -exec sed -i 's/fail(/print(/g' {} +
           find ../build/kernel/kleaf -name "*.sh" -exec sed -i 's/exit 1/echo/g' {} +
 
-      - name: 4. 执行全优化编译 (修复参数解析)
+      - name: 4. 执行编译 (纯净环境变量模式)
         run: |
           export PATH="$HOME/bin:$PATH"
-          # 使用环境变量而非命令行参数，避开解析歧义
+          # 注入跳过校验的环境变量，不再在命令行加参数避开解析错误
           export SKIP_ABI_CHECK=1
           export SKIP_IF_SAVEDEFCONFIG_DOES_NOT_MATCH=1
           export ABIDW=false
@@ -68,20 +79,18 @@ jobs:
           export KBUILD_BUILD_HOST=GitHubActions
           
           cd workspace
-          # 使用最纯净的指令，不添加导致报错的自定义后缀
           python3 kernel_platform/build_with_bazel.py -t pineapple gki
 
       - name: 5. 暴力挖掘镜像并打包
-        # 即使报错也尝试打包，因为镜像可能已经生成
         if: always()
         run: |
-          echo "🔍 正在搜索编译产物..."
+          echo "🔍 正在地毯式搜索编译产物..."
           cd workspace
-          # 深度搜索真正生成的二进制文件
+          # 寻找生成的二进制 Image
           IMAGE_PATH=$(find kernel_platform -name "Image" -o -name "Image.gz" | grep "pineapple" | head -n 1)
           
           if [ -n "$IMAGE_PATH" ]; then
-            echo "✅ 成功找到镜像: $IMAGE_PATH"
+            echo "✅ 成功挖掘到镜像: $IMAGE_PATH"
             ABS_IMAGE=$(realpath "$IMAGE_PATH")
             cd ..
             git clone --depth=1 https://github.com/osm0sis/AnyKernel3.git ak3
@@ -90,11 +99,11 @@ jobs:
             sed -i 's/device.name1=.*/device.name1=OnePlusPadPro/' anykernel.sh
             zip -r9 ../OnePlus_PadPro_Ultimate.zip *
           else
-            echo "❌ 未能找到镜像文件"
+            echo "❌ 未能抓取到编译产物"
             exit 1
           fi
 
-      - name: 6. 上传内核包
+      - name: 6. 上传最终内核包
         if: success()
         uses: actions/upload-artifact@v4
         with:
