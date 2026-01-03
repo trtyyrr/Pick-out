@@ -14,13 +14,9 @@ jobs:
     steps:
       - name: Maximize Build Space
         run: |
-          # 腾出空间：删除无用的大型组件
-          sudo rm -rf /usr/share/dotnet
-          sudo rm -rf /usr/local/lib/android
-          sudo rm -rf /opt/ghc
-          sudo rm -rf "/usr/local/share/boost"
-          sudo rm -rf "$AGENT_TOOLSDIRECTORY"
-          echo "清理完成，当前磁盘状态："
+          # 彻底清理环境，腾出约 40GB 空间
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc "/usr/local/share/boost" "$AGENT_TOOLSDIRECTORY"
+          echo "清理完成，磁盘空间如下："
           df -h
 
       - name: Checkout Config
@@ -30,7 +26,6 @@ jobs:
         run: |
           git config --global user.email "bot@github.com"
           git config --global user.name "KernelBot"
-          # 注入 Token 确保拉取私有库或高频率访问不被拦截
           git config --global url."https://${{ secrets.GITHUB_TOKEN }}@github.com/".insteadOf "https://github.com/"
 
       - name: Install Repo Tool
@@ -40,23 +35,22 @@ jobs:
           chmod a+x ~/bin/repo
           echo "$HOME/bin" >> $GITHUB_PATH
 
-            - name: Sync Source
+      - name: Sync Source
         run: |
           mkdir -p workspace && cd workspace
-          # 1. 在 init 阶段就指定 --depth=1
+          # 修复点：--depth=1 必须放在 repo init 中
           repo init -u https://github.com/${{ github.repository }}.git \
                     -b main \
                     -m manifest.xml \
                     --depth=1
           
-          # 2. sync 阶段移除 --depth 参数，改用更兼容的写法
-          # -j$(nproc) 利用多核加速，--force-sync 确保清理旧残留
+          # 移除 sync 阶段不兼容的 --depth 参数
           repo sync -c -j$(nproc) --no-tags --no-clone-bundle --force-sync
 
       - name: Fix Execution Permissions
         run: |
           cd workspace
-          # 遍历所有工具链和脚本并赋予执行权限
+          # 给所有脚本和二进制工具赋权
           find kernel_platform -name "*.sh" -exec chmod +x {} +
           find kernel_platform -name "bazel" -exec chmod +x {} +
           [ -f kernel_platform/build_with_bazel.py ] && chmod +x kernel_platform/build_with_bazel.py
@@ -67,28 +61,41 @@ jobs:
           # 执行编译指令
           ${{ github.event.inputs.custom_command }}
 
-      - name: Package AnyKernel3
+      # ======= 成功时的逻辑：打包刷机包 =======
+      - name: Package AnyKernel3 (On Success)
         if: success()
         run: |
-          # 1. 寻找编译产物 Image.gz
           KERNEL_IMAGE=$(find workspace/out -name "Image.gz" | head -n 1)
-          if [ -z "$KERNEL_IMAGE" ]; then echo "Image.gz not found"; exit 1; fi
+          if [ -z "$KERNEL_IMAGE" ]; then echo "未找到编译产物"; exit 1; fi
           
-          # 2. 克隆 AnyKernel3 模板
           git clone --depth=1 https://github.com/osm0sis/AnyKernel3.git ak3
-          
-          # 3. 准备打包
           cp "$KERNEL_IMAGE" ak3/
           cd ak3
-          # 这里可以根据需要修改 anykernel.sh 的 device.name
           sed -i 's/device.name1=.*/device.name1=OnePlusPadPro/' anykernel.sh
           zip -r9 ../OnePlus_PadPro_Kernel_AK3.zip * -x .git README.md
           
-      - name: Upload Kernel Artifact
+      - name: Upload Kernel (On Success)
         if: success()
         uses: actions/upload-artifact@v4
         with:
           name: OnePlus_PadPro_Kernel_Package
-          path: |
-            *.zip
-            workspace/out/*/dist/*.ko
+          path: "*.zip"
+
+      # ======= 失败时的逻辑：打包源码和日志 =======
+      - name: Pack Source Code (On Failure)
+        if: failure()
+        run: |
+          echo "编译失败，正在打包核心代码..."
+          # 排除巨大的数据文件夹，只打包 kernel_platform 源码
+          tar -czf kernel_source_debug.tar.gz \
+            --exclude='workspace/.repo' \
+            --exclude='workspace/out' \
+            workspace/kernel_platform
+
+      - name: Upload Source (On Failure)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Debug_Source_Code
+          path: kernel_source_debug.tar.gz
+          retention-days: 3
