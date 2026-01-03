@@ -1,4 +1,4 @@
-name: OnePlus_PadPro_Official_Pure_Build
+name: OnePlus_PadPro_Official_Ultimate
 
 on:
   workflow_dispatch:
@@ -12,7 +12,7 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - name: 1. 空间清理
+      - name: 1. 极致磁盘清理
         run: |
           sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc "/usr/local/share/boost" "$AGENT_TOOLSDIRECTORY"
           df -h
@@ -20,61 +20,67 @@ jobs:
       - name: 2. 检出配置
         uses: actions/checkout@v4
 
-      - name: 3. 同步源码 (保持清单原样)
+      - name: 3. 安装工具并同步官方源码
         run: |
+          # 配置 Git
+          git config --global user.email "bot@github.com"
+          git config --global user.name "KernelBot"
+          
+          # 安装 Repo 到当前目录并加入临时路径
+          mkdir -p ~/bin
+          curl https://storage.googleapis.com/git-repo-downloads/repo > ~/bin/repo
+          chmod a+x ~/bin/repo
+          export PATH="$HOME/bin:$PATH"
+          
+          # 开始同步
           mkdir -p workspace && cd workspace
           repo init -u https://github.com/${{ github.repository }}.git -b main -m manifest.xml --depth=1
-          repo sync -c -j$(nproc) --no-tags --no-clone-bundle --force-sync
+          repo sync -c -j$(nproc) --no-tags --no-clone-bundle --force-sync || repo sync -c -j1 --force-sync
 
-      - name: 4. 激活官方源码中的隐藏优化
+      - name: 4. 激活官方源码隐藏优化 (BBRv3/MGLRU/1000Hz)
         run: |
-          # 进入官方源码的标准路径 (GKI 6.1+ 路径)
-          cd workspace/kernel_platform/common/arch/arm64/configs
-          DEFCONFIG="gki_defconfig"
+          # 定位到官方 GKI 配置路径
+          # 注意：这里假设你的清单将 common 放在了 kernel_platform/common
+          CONF_PATH="workspace/kernel_platform/common/arch/arm64/configs/gki_defconfig"
           
-          echo "🛠️ 正在官方配置中开启网络与内存增强..."
-
-          # 开启官方 BBRv3 / BBR 支持
-          # 只要官方源码里有 tcp_bbr.c，这些配置就会生效
-          cat >> $DEFCONFIG <<EOF
+          if [ -f "$CONF_PATH" ]; then
+            echo "🚀 正在向官方配置注入优化..."
+            cat >> "$CONF_PATH" <<EOF
+          # 网络扩展
           CONFIG_TCP_CONG_BBR=y
           CONFIG_TCP_CONG_BBRV3=y
           CONFIG_NET_SCH_FQ=y
           CONFIG_NET_SCH_FQ_CODEL=y
           CONFIG_TCP_CONG_ADVANCED=y
-          CONFIG_TCP_CONG_WESTWOOD=y
-          EOF
-
-          # 开启官方 MGLRU 内存管理
-          cat >> $DEFCONFIG <<EOF
+          # 内存管理
           CONFIG_LRU_GEN=y
           CONFIG_LRU_GEN_ENABLED=y
-          EOF
-
-          # 开启高性能调度与 1000Hz
-          cat >> $DEFCONFIG <<EOF
+          # 性能调度
           CONFIG_HZ_1000=y
           CONFIG_SCHED_WALT=y
           EOF
-          
-          # 禁用官方调试日志 (减负)
-          sed -i 's/CONFIG_DEBUG_KERNEL=y/CONFIG_DEBUG_KERNEL=n/' $DEFCONFIG
-          
-          echo "✅ 官方配置修改完毕"
+            # 禁用调试以提升速度
+            sed -i 's/CONFIG_DEBUG_KERNEL=y/CONFIG_DEBUG_KERNEL=n/' "$CONF_PATH"
+          else
+            echo "⚠️ 未找到 gki_defconfig，请检查清单路径"
+            exit 1
+          fi
 
-      - name: 5. 赋予官方脚本执行权限
+      - name: 5. 编译准备与赋权
         run: |
           cd workspace
           find kernel_platform -name "*.sh" -exec chmod +x {} +
           find kernel_platform -name "bazel" -exec chmod +x {} +
           [ -f kernel_platform/build_with_bazel.py ] && chmod +x kernel_platform/build_with_bazel.py
 
-      - name: 6. 运行官方 Bazel 编译
+      - name: 6. 执行官方 Bazel 编译
         run: |
+          # 临时加入 repo 路径以防编译脚本需要
+          export PATH="$HOME/bin:$PATH"
           cd workspace
           ${{ github.event.inputs.custom_command }}
 
-      - name: 7. 打包刷机包
+      - name: 7. 自动化 AnyKernel3 打包
         if: success()
         run: |
           KERNEL_IMAGE=$(find workspace/out -name "Image.gz" | head -n 1)
@@ -82,7 +88,7 @@ jobs:
           cp "$KERNEL_IMAGE" ak3/
           cd ak3
           sed -i 's/device.name1=.*/device.name1=OnePlusPadPro/' anykernel.sh
-          zip -r9 ../OnePlus_PadPro_Kernel_Official_Optimized.zip *
+          zip -r9 ../OnePlus_PadPro_Kernel_Official_BBR.zip *
           
       - name: 8. 上传成品
         if: success()
@@ -90,3 +96,15 @@ jobs:
         with:
           name: Official_Optimized_Kernel
           path: "*.zip"
+
+      - name: 9. 失败诊断
+        if: failure()
+        run: |
+          tar -czf debug_info.tar.gz --exclude='workspace/.repo' --exclude='workspace/out' workspace/kernel_platform
+          
+      - name: 10. 上传诊断包
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Debug_Source
+          path: debug_info.tar.gz
