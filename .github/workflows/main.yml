@@ -1,7 +1,7 @@
 name: OnePlus Kernel Factory
 
 on:
-  workflow_dispatch: # 支持手动点击运行
+  workflow_dispatch:
 
 jobs:
   build:
@@ -14,50 +14,52 @@ jobs:
         run: |
           sudo apt update
           sudo apt install -y python3 python3-pip git curl zip unzip
-          # 安装 yq 用于解析 yl
+          # 使用更稳定的方式安装 yq
           sudo wget https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64 -O /usr/bin/yq
           sudo chmod +x /usr/bin/yq
 
       - name: Sync Sources
         run: |
-          # 1. 解析 nn.yml
-          MSM_URL=$(yq '.msm_kernel_url' nn.yml)
-          COMMON_URL=$(yq '.common_url' nn.yml)
-          BRANCH=$(yq '.branch' nn.yml)
+          # 1. 严格解析 nn.yml (去掉引号)
+          MSM_URL=$(yq eval '.msm_kernel_url' nn.yml | tr -d '"')
+          COMMON_URL=$(yq eval '.common_url' nn.yml | tr -d '"')
+          BRANCH=$(yq eval '.branch' nn.yml | tr -d '"')
           
+          # 2. 变量检查（防止 Git 参数缺失）
+          if [ "$MSM_URL" == "null" ] || [ "$BRANCH" == "null" ]; then
+            echo "错误: 无法从 nn.yml 读取 URL 或分支信息！"
+            echo "当前内容: MSM_URL=$MSM_URL, BRANCH=$BRANCH"
+            exit 1
+          fi
+
+          echo "正在同步分支: $BRANCH"
           mkdir -p kernel_platform
           cd kernel_platform
           
-          # 2. 克隆核心代码
-          git clone --depth 1 $MSM_URL -b $BRANCH msm-kernel
-          git clone --depth 1 $COMMON_URL -b $BRANCH common
+          # 3. 克隆代码
+          git clone --depth 1 "$MSM_URL" -b "$BRANCH" msm-kernel
+          git clone --depth 1 "$COMMON_URL" -b "$BRANCH" common
           
-          # 3. 建立 Bazel 必须的入口链接
+          # 4. 建立链接
           ln -sf msm-kernel/build_with_bazel.py build_with_bazel.py
           ln -sf msm-kernel/bazel.WORKSPACE WORKSPACE
 
       - name: Fix Bazel Binary Path
         run: |
           cd kernel_platform
-          # 解决你之前的报错：创建脚本预期的 tools 目录
           mkdir -p tools
-          # 下载适配一加脚本的 Bazel 6.4.0 (推荐版本)
+          # 下载适配一加的特定版本 Bazel
           curl -Lo tools/bazel https://github.com/bazelbuild/bazel/releases/download/6.4.0/bazel-6.4.0-linux-x86_64
           chmod +x tools/bazel
-          
-          # 验证路径，防止报错
-          ls -l tools/bazel
 
       - name: Execute Build
         run: |
           cd kernel_platform
-          # 运行一加编译脚本
           python3 build_with_bazel.py -t pineapple gki
 
       - name: Upload Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: OnePlus-PadPro-Kernel
+          name: Kernel_Image
           path: |
             kernel_platform/out/msm-kernel-pineapple-gki/dist/Image*
-            kernel_platform/out/msm-kernel-pineapple-gki/dist/*.ko
