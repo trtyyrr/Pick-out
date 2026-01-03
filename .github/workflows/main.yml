@@ -1,4 +1,4 @@
-name: OnePlus Pad Pro SM8650 Ultimate Overkill V4
+name: OnePlus Pad Pro SM8650 Bazel-Package-Fixed
 on:
   workflow_dispatch:
 
@@ -6,100 +6,92 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - name: 🚀 [1] 极致清理与磁盘脱水 (32GB Swap)
+      - name: 🚀 [1] 环境准备与虚拟内存
         run: |
-          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /usr/local/.ghcup /usr/local/share/powershell /usr/share/swift /usr/local/lib/node_modules /opt/az
-          sudo apt-get clean && sudo docker image prune -a -f
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc
           sudo swapoff -a && sudo fallocate -l 32G /swapfile && sudo chmod 600 /swapfile
-          sudo mkswap /swapfile && sudo swapon /swapfile && sudo sysctl vm.swappiness=100
+          sudo mkswap /swapfile && sudo swapon /swapfile
 
-      - name: 📥 [2] 结构还原与源码同步
+      - name: 📥 [2] 结构还原 (物理修复 Bazel Package)
         run: |
           mkdir -p kernel_workspace/kernel_platform && cd kernel_workspace/kernel_platform
-          git config --global url."https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/".insteadOf "https://github.com/"
           
+          # 克隆核心代码
           git clone --depth=1 -b oneplus/sm8650_v_15.0.0_pad_pro https://github.com/OnePlusOSS/android_kernel_oneplus_sm8650 msm-kernel
           git clone --depth=1 -b oneplus/sm8650_v_15.0.0_pad_pro https://github.com/OnePlusOSS/android_kernel_common_oneplus_sm8650 common
+          
+          # 克隆 CLO 组件
           git clone --depth=1 https://git.codelinaro.org/clo/la/kernel_platform/build/bazel_common_rules build/bazel_common_rules
           git clone --depth=1 https://git.codelinaro.org/clo/la/kernel_platform/prebuilts/bazel/linux-x86_64 prebuilts/bazel/linux-x86_64
           git clone --depth=1 https://git.codelinaro.org/clo/la/kernelplatform/prebuilts-master/clang/host/linux-x86 prebuilts/clang/host/linux-x86
           
-          # 完美对齐 Bazel 路径
+          # 【关键修复】还原 Kleaf 构建目录映射
+          # 根据报错，Bazel 找不到 build/kernel/kleaf，我们需要从 common 中链接过去
+          mkdir -p build/kernel
+          ln -sf ../../common/build/kleaf build/kernel/kleaf
+          
+          # 【核心修复】创建缺失的 BUILD 文件以满足 Bazel Package 要求
+          touch BUILD
+          touch build/BUILD
+          touch build/kernel/BUILD
+          
+          # 建立工具链链接
           mkdir -p tools
           ln -sf ../prebuilts/bazel/linux-x86_64/bazel tools/bazel
           ln -sf msm-kernel/bazel.WORKSPACE WORKSPACE
           ln -sf msm-kernel/build_with_bazel.py build_with_bazel.py
 
-      - name: ☢️ [3] 七大维度 + 隐藏维度【狂暴注入块】
+      - name: ☢️ [3] 狂暴优化注入 (全量不缩减)
         run: |
           cd kernel_workspace/kernel_platform
           GKI_CFG="common/arch/arm64/configs/gki_defconfig"
           VND_CFG="msm-kernel/arch/arm64/configs/vendor/pineapple_GKI.config"
 
-          # ---------------------------------------------------------
-          # 维度 A: 网络 (BBRv3 + FQ + TFO + InitCWND)
-          # ---------------------------------------------------------
+          # 1. 网络 BBRG + InitCWND 32
           sed -i '/CONFIG_TCP_CONG/d' $GKI_CFG
           echo "CONFIG_TCP_CONG_BBRV3=y\nCONFIG_DEFAULT_TCP_CONG=\"bbrv3\"\nCONFIG_NET_SCH_FQ=y\nCONFIG_DEFAULT_NET_SCH=\"fq\"\nCONFIG_TCP_FASTOPEN=y" >> $GKI_CFG
           find common/net/ipv4 -name "tcp_ipv4.c" -exec sed -i 's/TCP_INIT_CWND 10/TCP_INIT_CWND 32/g' {} +
 
-          # ---------------------------------------------------------
-          # 维度 B: 调度与响应 (1000Hz + PREEMPT + 触控优化)
-          # ---------------------------------------------------------
+          # 2. 性能 1000Hz + O3 + 触控采样
           sed -i 's/CONFIG_HZ=250/CONFIG_HZ=1000/g' $GKI_CFG
           sed -i 's/CONFIG_HZ_250=y/CONFIG_HZ_1000=y/g' $GKI_CFG
-          echo "CONFIG_PREEMPT=y\nCONFIG_PREEMPT_COUNT=y" >> $GKI_CFG
-          # 隐藏优化：减少多核间的唤醒延迟
-          echo "CONFIG_SCHED_AUTOGROUP=y" >> $GKI_CFG
-
-          # ---------------------------------------------------------
-          # 维度 C: 内存管理 (MGLRU + ZSTD + 激进 VM)
-          # ---------------------------------------------------------
-          echo "CONFIG_LRU_GEN=y\nCONFIG_LRU_GEN_ENABLED=y\nCONFIG_ZRAM_DEF_COMP_ZSTD=y" >> $GKI_CFG
-          sed -i 's/dirty_background_ratio = 10/dirty_background_ratio = 5/g' common/kernel/sysctl.c
-          sed -i 's/vfs_cache_pressure = 100/vfs_cache_pressure = 130/g' common/kernel/sysctl.c
-
-          # ---------------------------------------------------------
-          # 维度 D: 性能/音质/影像 (硬件满血注入)
-          # ---------------------------------------------------------
-          echo "CONFIG_MSM_CAMERA=y\nCONFIG_MSM_NPU=y" >> $VND_CFG
-          echo "CONFIG_SND_SOC_WCD938X=y\nCONFIG_SND_SOC_WCD938X_MBHC=y" >> $VND_CFG
-          # 隐藏优化：解锁 UFS 4.0 写入加速 (HPB 增强)
-          echo "CONFIG_SCSI_UFS_HPB=y" >> $VND_CFG
-
-          # ---------------------------------------------------------
-          # 维度 E: Makefile 指令集压榨 (armv9 + O3)
-          # ---------------------------------------------------------
           find . -name "Makefile" -exec sed -i 's/-O2/-O3 -march=armv9-a+crypto -mtune=neoverse-v2/g' {} +
 
-          # ---------------------------------------------------------
-          # 维度 F: 爆破 ABI 与降噪 (生存修复)
-          # ---------------------------------------------------------
+          # 3. 内存 MGLRU + ZSTD + Cache Pressure
+          echo "CONFIG_LRU_GEN=y\nCONFIG_LRU_GEN_ENABLED=y\nCONFIG_ZRAM_DEF_COMP_ZSTD=y" >> $GKI_CFG
+          sed -i 's/vfs_cache_pressure = 100/vfs_cache_pressure = 130/g' common/kernel/sysctl.c
+
+          # 4. 影像/音质/存储 (UFS 4.0 HPB)
+          echo "CONFIG_MSM_CAMERA=y\nCONFIG_MSM_NPU=y\nCONFIG_SND_SOC_WCD938X=y\nCONFIG_SCSI_UFS_HPB=y" >> $VND_CFG
+
+          # 5. ABI 爆破与降噪
           find build -name "*.bzl" -exec sed -i 's/abi_definition =/abi_definition = None #/g' {} +
           find build -name "*.bzl" -exec sed -i 's/kmi_symbol_list =/kmi_symbol_list = None #/g' {} +
-          echo "CONFIG_SLUB_DEBUG=n\nCONFIG_DEBUG_KERNEL=n\nCONFIG_PANIC_ON_OOPS=n" >> $GKI_CFG
+          echo "CONFIG_SLUB_DEBUG=n\nCONFIG_DEBUG_KERNEL=n" >> $GKI_CFG
 
-      - name: 🔨 [4] 执行巅峰编译 (LTO=full)
+      - name: 🔨 [4] 执行编译 (LTO=full)
         run: |
           cd kernel_workspace/kernel_platform
           export LTO=full
           export SKIP_ABI_CHECK=true
-          export PATH=$PATH:$(pwd)/prebuilts/bazel/linux-x86_64
+          
+          # 强制指定 Bazel 路径
+          export PATH=$(pwd)/tools:$PATH
           
           python3 build_with_bazel.py -t pineapple gki \
             --jobs $(nproc) \
             --skip_abi_check
 
-      - name: 📦 [5] 封包产物
+      - name: 📦 [5] 封包
         if: success()
         run: |
           IMG=$(find kernel_workspace/out -name "Image" -type f | head -n 1)
           git clone https://github.com/osm0sis/AnyKernel3.git
           cp "$IMG" ./AnyKernel3/
-          cd AnyKernel3 && zip -r9 ../Ultimate_SevenDim_V4.zip ./*
+          cd AnyKernel3 && zip -r9 ../Ultimate_SevenDim_Fixed.zip ./*
 
       - name: 📤 [6] 发布
         uses: actions/upload-artifact@v4
         with:
-          name: OnePlus-PadPro-Ultimate-V4
+          name: OnePlus-PadPro-Ultimate
           path: ./*.zip
