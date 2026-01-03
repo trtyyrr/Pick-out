@@ -10,45 +10,55 @@ on:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-latest # 或者你使用的其他 runner
+
     steps:
-    - name: 🚀 极致内存脱水与 30GB 虚拟空间
-      run: |
-        free -h && df -h
+      - name: 🚀 极致磁盘清理与 32GB 虚拟内存扩容
+        run: |
+          echo "========= 清理前磁盘状态 ========="
+          df -h
+          
+          # 1. 暴力删除 GitHub 预装的巨型软件包 (释放约 35GB-40GB)
+          sudo rm -rf /usr/local/lib/android
+          sudo rm -rf /usr/share/dotnet
+          sudo rm -rf /opt/ghc
+          sudo rm -rf /usr/local/.ghcup
+          sudo rm -rf /usr/local/share/powershell
+          sudo rm -rf /usr/share/swift
+          sudo rm -rf /usr/local/lib/node_modules
+          sudo rm -rf /opt/az
+          
+          # 2. 清理系统冗余
+          sudo apt-get clean
+          sudo docker image prune -a -f
+          
+          # 3. 创建 32GB Swapfile (这是过 LTO 链接的关键)
+          sudo swapoff -a
+          sudo fallocate -l 32G /swapfile
+          sudo chmod 600 /swapfile
+          sudo mkswap /swapfile
+          sudo swapon /swapfile
+          
+          # 4. 优化内核交换参数
+          sudo sysctl vm.swappiness=100
+          
+          echo "========= 清理后磁盘与内存状态 ========="
+          free -h
+          df -h
 
-    # 1. 暴力删除预装环境 (释放约 30GB-40GB 磁盘空间)
-    # 删掉 Android SDK, .NET, Haskell, CodeQL 等大型预装包
-    sudo rm -rf /usr/local/lib/android
-    sudo rm -rf /usr/share/dotnet
-    sudo rm -rf /opt/ghc
-    sudo rm -rf /usr/local/.ghcup
-    sudo rm -rf /usr/local/share/powershell
-    sudo rm -rf /usr/share/swift
-    sudo rm -rf /opt/az
-    sudo rm -rf /usr/local/lib/node_modules
-    
-    # 2. 清理 Docker 镜像和系统缓存
-    sudo docker image prune -a -f
-    sudo apt-get clean
-    
-    # 3. 建立 32GB 的巨型 Swapfile (将磁盘当内存用)
-    # 虽然磁盘速度不如内存，但对于 LTO 链接阶段的符号存储至关重要
-    sudo swapoff -a
-    sudo fallocate -l 32G /swapfile
-    sudo chmod 600 /swapfile
-    sudo mkswap /swapfile
-    sudo swapon /swapfile
-    
-    # 4. 调整内核参数：让系统更积极地使用 Swap
-    sudo sysctl vm.swappiness=100
-    sudo sysctl vm.vfs_cache_pressure=200
-    
-    # 5. 最后的物理内存脱水 (清空 PageCache)
-    sudo sync && echo 3 | sudo tee /proc/sys/vm/drop_caches
+      # ... (这里是你之前的代码，如 Checkout 代码、配置环境等)
 
-    echo "========= 清理后状态 ========="
-    free -h && df -h
-
+      - name: 🔨 限制并发编译 (防 OOM 关键步)
+        run: |
+          # 在执行 bazel build 时，必须加入内存和核心限制参数
+          # 即使有 Swap，也要防止瞬间并发过高导致 Kernel Panic
+          
+          bazel build //msm-kernel:pineapple_gki \
+            --local_ram_resources=6144 \
+            --local_cpu_resources=2 \
+            --jobs=2 \
+            --define=LTO=full \
+            --verbose_failures
       - name: 2. 同步源码与安装工具链
         run: |
           git config --global user.email "bot@github.com"
