@@ -32,14 +32,14 @@ jobs:
           repo init -u https://github.com/${{ github.repository }}.git -b main -m manifest.xml --depth=1
           repo sync -c -j$(nproc) --no-tags --no-clone-bundle --force-sync || repo sync -c -j1 --force-sync
 
-      - name: 4. 激活优化并规避校验 (关键步骤)
+      - name: 4. 激活优化并规避校验
         run: |
           CONF_PATH="workspace/kernel_platform/common/arch/arm64/configs/gki_defconfig"
           
           if [ -f "$CONF_PATH" ]; then
             echo "🚀 正在清理并注入极致优化..."
             
-            # 先清除所有冲突项，确保 savedefconfig 校验不报错
+            # 先清除所有冲突项
             sed -i '/CONFIG_TCP_CONG_BBR/d' "$CONF_PATH"
             sed -i '/CONFIG_NET_SCH_FQ/d' "$CONF_PATH"
             sed -i '/CONFIG_LRU_GEN/d' "$CONF_PATH"
@@ -48,7 +48,7 @@ jobs:
             sed -i '/CONFIG_TCP_CONG_ADVANCED/d' "$CONF_PATH"
             sed -i '/CONFIG_DEBUG_KERNEL/d' "$CONF_PATH"
 
-            # 精准注入配置 (纯净格式，无注释)
+            # 精准注入配置 (纯净格式)
             cat >> "$CONF_PATH" <<EOF
 CONFIG_TCP_CONG_ADVANCED=y
 CONFIG_TCP_CONG_BBR=y
@@ -61,10 +61,6 @@ CONFIG_HZ_1000=y
 CONFIG_SCHED_WALT=y
 CONFIG_DEBUG_KERNEL=n
 EOF
-            
-            # 关闭全局的校验开关 (强行跳过 Bazel 的 defconfig 差异检查)
-            # 在某些 Bazel 构建中，可以通过修改环境变量来禁用 savedefconfig 检查
-            echo "KCONFIG_NOT_STRICT=1" >> $GITHUB_ENV
           else
             echo "⚠️ 未找到 gki_defconfig"
             exit 1
@@ -77,7 +73,7 @@ EOF
           find kernel_platform -name "bazel" -exec chmod +x {} +
           [ -f kernel_platform/build_with_bazel.py ] && chmod +x kernel_platform/build_with_bazel.py
 
-      - name: 6. 执行 Bazel 编译 (强力关闭 ABI 校验)
+      - name: 6. 执行 Bazel 编译
         run: |
           export PATH="$HOME/bin:$PATH"
           cd workspace
@@ -88,7 +84,7 @@ EOF
           export KBUILD_BUILD_USER=trtyyrr
           export KBUILD_BUILD_HOST=GitHubActions
 
-          # 在执行指令后添加 Bazel 参数，穿透沙盒禁用校验
+          # 启动编译，通过 --action_env 穿透沙盒
           ${{ github.event.inputs.custom_command }} -- \
             --action_env=SKIP_ABI_CHECK=1 \
             --action_env=SKIP_IF_SAVEDEFCONFIG_DOES_NOT_MATCH=1 \
@@ -99,11 +95,17 @@ EOF
         run: |
           KERNEL_IMAGE=$(find workspace/out -name "Image.gz" | head -n 1)
           [ -z "$KERNEL_IMAGE" ] && KERNEL_IMAGE=$(find workspace/out -name "Image" | head -n 1)
-          git clone --depth=1 https://github.com/osm0sis/AnyKernel3.git ak3
-          cp "$KERNEL_IMAGE" ak3/
-          cd ak3
-          sed -i 's/device.name1=.*/device.name1=OnePlusPadPro/' anykernel.sh
-          zip -r9 ../OnePlus_PadPro_Ultimate_Optimized.zip *
+          
+          if [ -f "$KERNEL_IMAGE" ]; then
+            git clone --depth=1 https://github.com/osm0sis/AnyKernel3.git ak3
+            cp "$KERNEL_IMAGE" ak3/
+            cd ak3
+            sed -i 's/device.name1=.*/device.name1=OnePlusPadPro/' anykernel.sh
+            zip -r9 ../OnePlus_PadPro_Ultimate_Optimized.zip *
+          else
+            echo "❌ 编译可能成功但未找到镜像文件"
+            exit 1
+          fi
           
       - name: 8. 上传成品
         if: success()
@@ -115,7 +117,8 @@ EOF
       - name: 9. 失败诊断
         if: failure()
         run: |
-          tar -czf debug_info.tar.gz --exclude='workspace/.repo' --exclude='workspace/out' workspace/kernel_platform
+          # 仅在失败时打包日志，避免占用空间
+          tar -czf debug_info.tar.gz --exclude='workspace/.repo' --exclude='workspace/out' workspace/kernel_platform/common/arch/arm64/configs/gki_defconfig || true
           
       - name: 10. 上传诊断包
         if: failure()
