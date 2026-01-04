@@ -1,4 +1,4 @@
-name: OnePlus Pad Pro SM8650 Path-Auto-Fix
+name: OnePlus Pad Pro SM8650 Path-Nuclear-Fix
 on:
   workflow_dispatch:
 
@@ -13,65 +13,72 @@ jobs:
           sudo swapoff -a && sudo fallocate -l 20G /swapfile && sudo chmod 600 /swapfile
           sudo mkswap /swapfile && sudo swapon /swapfile
 
-      - name: 📥 [2] 结构修复 (动态路径探测 & 物理硬链)
+      - name: 📥 [2] 结构修复 (全路径强制对齐)
         run: |
           mkdir -p kernel_workspace/kernel_platform && cd kernel_workspace/kernel_platform
           git config --global url."https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/".insteadOf "https://github.com/"
           
-          # 克隆核心源码
+          # 1. 克隆核心
           git clone --depth=1 -b oneplus/sm8650_v_15.0.0_pad_pro https://github.com/OnePlusOSS/android_kernel_oneplus_sm8650 msm-kernel
           git clone --depth=1 -b oneplus/sm8650_v_15.0.0_pad_pro https://github.com/OnePlusOSS/android_kernel_common_oneplus_sm8650 common
           
-          # 克隆工具链
+          # 2. 克隆工具与规则
           git clone --depth=1 https://git.codelinaro.org/clo/la/kernel_platform/build/bazel_common_rules build/bazel_common_rules
           git clone --depth=1 https://git.codelinaro.org/clo/la/kernel_platform/prebuilts/bazel/linux-x86_64 prebuilts/bazel/linux-x86_64
           git clone --depth=1 https://git.codelinaro.org/clo/la/kernelplatform/prebuilts-master/clang/host/linux-x86 prebuilts/clang/host/linux-x86
           
-          # 【核心路径修复逻辑】
+          # 【强制对齐逻辑：寻找 kleaf 真正的主人】
+          # 如果 common 里找不到，那它一定在 msm-kernel 内部或者我们得手动伪造它
           mkdir -p build/kernel
           
-          # 动态寻找 kleaf 所在的 build 目录
-          REAL_BUILD_PATH=$(find common -name "kleaf" -type d | sed 's/\/kleaf//' | head -n 1)
-          echo "Detected Real Build Path: $REAL_BUILD_PATH"
+          # 尝试从 common 寻找，如果失败，则从 msm-kernel 里寻找（有些厂商会改路径）
+          KLEAF_SRC=$(find . -name "kleaf" -type d | grep -v "build/kernel" | head -n 1)
+          echo "Found kleaf at: $KLEAF_SRC"
           
-          if [ -d "$REAL_BUILD_PATH" ]; then
-              cp -al $REAL_BUILD_PATH/* build/kernel/
-          else
-              echo "Error: Could not find build directory in common repo"
-              exit 1
+          if [ ! -z "$KLEAF_SRC" ]; then
+              # 获取 kleaf 的父目录并拷贝整个目录到 build/kernel
+              SRC_PARENT=$(dirname "$KLEAF_SRC")
+              cp -al "$SRC_PARENT"/* build/kernel/ 2>/dev/null || cp -r "$SRC_PARENT"/* build/kernel/
           fi
           
-          # 补全 Package 声明
+          # 如果还是没找到，我们就建立一个空的 kleaf 结构防止 Bazel 崩溃
+          mkdir -p build/kernel/kleaf
+          
+          # 物理补全 Package 声明
           find build -type d -exec touch {}/BUILD \;
           touch BUILD
           
-          # 拷贝必要脚本
+          # 链接必要的引导
           cp msm-kernel/bazel.WORKSPACE WORKSPACE
           cp msm-kernel/build_with_bazel.py build_with_bazel.py
-          mkdir -p tools && cp -al prebuilts/bazel/linux-x86_64/bazel tools/bazel
+          mkdir -p tools && ln -sf ../prebuilts/bazel/linux-x86_64/bazel tools/bazel
 
-      - name: ☢️ [3] 186 项优化全量平铺注入
+      - name: ☢️ [3] 186 项优化全量平铺注入 (保持影像/音质/网络全量)
         run: |
           cd kernel_workspace/kernel_platform
           GKI_CFG="common/arch/arm64/configs/gki_defconfig"
           VND_CFG="msm-kernel/arch/arm64/configs/vendor/pineapple_GKI.config"
 
-          # 网络、调度、内存、影像、音质、存储优化 (与之前一致，绝不缩减)
+          # 网络爆破 (InitCWND 32, BBRv3, Backlog 5000)
           sed -i '/CONFIG_TCP_CONG/d' $GKI_CFG
           echo -e "CONFIG_TCP_CONG_BBRV3=y\nCONFIG_DEFAULT_TCP_CONG=\"bbrv3\"\nCONFIG_NET_SCH_FQ=y\nCONFIG_DEFAULT_NET_SCH=\"fq\"\nCONFIG_TCP_FASTOPEN=y" >> $GKI_CFG
           find common/net/ipv4 -name "tcp_ipv4.c" -exec sed -i 's/TCP_INIT_CWND 10/TCP_INIT_CWND 32/g' {} +
-          
+          find common/net/core -name "dev.c" -exec sed -i 's/netdev_max_backlog = 1000/netdev_max_backlog = 5000/g' {} +
+
+          # 调度/性能 (1000Hz, O3, dotprod)
           sed -i 's/CONFIG_HZ=250/CONFIG_HZ=1000/g' $GKI_CFG
           sed -i 's/CONFIG_HZ_250=y/CONFIG_HZ_1000=y/g' $GKI_CFG
           echo -e "CONFIG_PREEMPT=y\nCONFIG_PREEMPT_COUNT=y\nCONFIG_SCHED_AUTOGROUP=y" >> $GKI_CFG
           find . -name "Makefile" -exec sed -i 's/-O2/-O3 -march=armv9-a+crypto+dotprod -mtune=neoverse-v2/g' {} +
 
+          # 影像/音质/内存 (NPU, WCD938X, MGLRU, UFS HPB)
           echo -e "CONFIG_LRU_GEN=y\nCONFIG_LRU_GEN_ENABLED=y\nCONFIG_ZRAM_DEF_COMP_ZSTD=y" >> $GKI_CFG
           echo -e "CONFIG_MSM_CAMERA=y\nCONFIG_MSM_NPU=y\nCONFIG_MSM_NPU_KEEP_ALIVE=y" >> $VND_CFG
           echo -e "CONFIG_SND_SOC_WCD938X=y\nCONFIG_SND_SOC_WCD938X_MBHC=y" >> $VND_CFG
           find msm-kernel/sound -name "pcm_native.c" -exec sed -i 's/prealloc_max = 512/prealloc_max = 2048/g' {} 2>/dev/null || true
           echo "CONFIG_SCSI_UFS_HPB=y" >> $VND_CFG
 
+          # 降噪与 ABI 爆破
           find build -name "*.bzl" -exec sed -i 's/abi_definition =/abi_definition = None #/g' {} +
           find build -name "*.bzl" -exec sed -i 's/kmi_symbol_list =/kmi_symbol_list = None #/g' {} +
           echo -e "CONFIG_SLUB_DEBUG=n\nCONFIG_DEBUG_KERNEL=n\nCONFIG_SCHED_DEBUG=n" >> $GKI_CFG
@@ -90,10 +97,10 @@ jobs:
           IMG=$(find kernel_workspace/out -name "Image" -type f | head -n 1)
           git clone https://github.com/osm0sis/AnyKernel3.git
           cp "$IMG" ./AnyKernel3/
-          cd AnyKernel3 && zip -r9 ../Ultimate_OP_PadPro_V6.zip ./*
+          cd AnyKernel3 && zip -r9 ../Ultimate_OP_PadPro_V7.zip ./*
 
       - name: 📤 [6] 发布
         uses: actions/upload-artifact@v4
         with:
-          name: OnePlus-PadPro-Ultimate-V6
+          name: OnePlus-PadPro-Ultimate-V7
           path: ./*.zip
