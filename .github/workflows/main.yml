@@ -95,4 +95,5 @@ jobs:
       - name: 📤 [6] 发布
         uses: actions/upload-artifact@v4
         with:
-          name: OnePlus-PadPro-Ultimate
+          name: OnePlus-PadPro-Ultimate-V6
+          path: ./*.zip
