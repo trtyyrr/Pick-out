@@ -1,4 +1,4 @@
-name: OnePlus Pad Pro SM8650 Path-Overkill-V9
+name: OnePlus Pad Pro SM8650 Ultimate-V10
 on:
   workflow_dispatch:
 
@@ -6,29 +6,28 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - name: 🧹 [1] 物理空间爆破 (清理 35GB+)
+      - name: 🧹 [1] 空间爆破
         run: |
           sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /usr/local/.ghcup /usr/local/share/powershell /usr/share/swift /usr/local/lib/node_modules /opt/az /usr/lib/google-cloud-sdk
           sudo apt-get clean && sudo docker image prune -a -f
           sudo swapoff -a && sudo fallocate -l 20G /swapfile && sudo chmod 600 /swapfile
           sudo mkswap /swapfile && sudo swapon /swapfile
 
-      - name: 📥 [2] 结构与工具物理爆破 (全路径填充)
+      - name: 📥 [2] 结构修复与 Bazel 路径暴力对齐
         run: |
-          # 建立标准工作区
           mkdir -p kernel_workspace/kernel_platform
           cd kernel_workspace/kernel_platform
           
           git config --global url."https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/".insteadOf "https://github.com/"
           
-          # 克隆所有源码
+          # 克隆核心
           git clone --depth=1 -b oneplus/sm8650_v_15.0.0_pad_pro https://github.com/OnePlusOSS/android_kernel_oneplus_sm8650 msm-kernel
           git clone --depth=1 -b oneplus/sm8650_v_15.0.0_pad_pro https://github.com/OnePlusOSS/android_kernel_common_oneplus_sm8650 common
           git clone --depth=1 https://git.codelinaro.org/clo/la/kernel_platform/build/bazel_common_rules build/bazel_common_rules
           git clone --depth=1 https://git.codelinaro.org/clo/la/kernel_platform/prebuilts/bazel/linux-x86_64 prebuilts/bazel/linux-x86_64
           git clone --depth=1 https://git.codelinaro.org/clo/la/kernelplatform/prebuilts-master/clang/host/linux-x86 prebuilts/clang/host/linux-x86
           
-          # 【路径爆破逻辑 1：物理映射 Kleaf】
+          # 【修复 1: 物理对齐 Kleaf】
           mkdir -p build/kernel
           KLEAF_SRC=$(find . -name "kleaf" -type d | grep -v "build/kernel" | head -n 1)
           if [ ! -z "$KLEAF_SRC" ]; then
@@ -39,43 +38,44 @@ jobs:
           cp msm-kernel/bazel.WORKSPACE WORKSPACE
           cp msm-kernel/build_with_bazel.py build_with_bazel.py
 
-          # 【路径爆破逻辑 2：Bazel 物理全覆盖】
-          BAZEL_BIN=$(pwd)/prebuilts/bazel/linux-x86_64/bazel
-          # 1. 填充到脚本报错的 /kernel_workspace/tools
-          mkdir -p ../tools && cp -f $BAZEL_BIN ../tools/bazel
-          # 2. 填充到当前工作区的 tools
-          mkdir -p tools && cp -f $BAZEL_BIN tools/bazel
-          # 3. 填充到系统 PATH 路径
-          sudo cp -f $BAZEL_BIN /usr/local/bin/bazel
-          sudo chmod +x /usr/local/bin/bazel
+          # 【修复 2: 处理 Bazel 二进制文件】
+          # 既然系统路径有死链，我们就把 prebuilts 里的 bazel 拷贝到脚本指定的层级
+          BAZEL_REAL_PATH=$(pwd)/prebuilts/bazel/linux-x86_64/bazel
+          chmod +x $BAZEL_REAL_PATH
+          
+          # 在脚本报错的层级建立 tools
+          mkdir -p ../tools
+          cp -f $BAZEL_REAL_PATH ../tools/bazel
+          mkdir -p tools
+          cp -f $BAZEL_REAL_PATH tools/bazel
 
-      - name: ☢️ [3] 186 项优化全量平铺 (影像/音质/网络/调度)
+      - name: ☢️ [3] 186 项优化全量注入 (影像/音质/网络/调度)
         run: |
           cd kernel_workspace/kernel_platform
           GKI_CFG="common/arch/arm64/configs/gki_defconfig"
           VND_CFG="msm-kernel/arch/arm64/configs/vendor/pineapple_GKI.config"
 
-          # 网络爆破
+          # 网络: BBRv3 + InitCWND 32 + Backlog 5000
           sed -i '/CONFIG_TCP_CONG/d' $GKI_CFG
           echo -e "CONFIG_TCP_CONG_BBRV3=y\nCONFIG_DEFAULT_TCP_CONG=\"bbrv3\"\nCONFIG_NET_SCH_FQ=y\nCONFIG_DEFAULT_NET_SCH=\"fq\"\nCONFIG_TCP_FASTOPEN=y" >> $GKI_CFG
           find common/net/ipv4 -name "tcp_ipv4.c" -exec sed -i 's/TCP_INIT_CWND 10/TCP_INIT_CWND 32/g' {} +
           find common/net/core -name "dev.c" -exec sed -i 's/netdev_max_backlog = 1000/netdev_max_backlog = 5000/g' {} +
 
-          # 调度性能 (1000Hz + O3)
+          # 性能: 1000Hz + O3 + 指令集加速
           sed -i 's/CONFIG_HZ=250/CONFIG_HZ=1000/g' $GKI_CFG
           sed -i 's/CONFIG_HZ_250=y/CONFIG_HZ_1000=y/g' $GKI_CFG
           echo -e "CONFIG_PREEMPT=y\nCONFIG_PREEMPT_COUNT=y\nCONFIG_SCHED_AUTOGROUP=y" >> $GKI_CFG
           find . -name "Makefile" -exec sed -i 's/-O2/-O3 -march=armv9-a+crypto+dotprod -mtune=neoverse-v2/g' {} +
 
-          # 影像影像 (NPU锁频) & 音质 (Hi-Fi / DMA 2048)
+          # 影像音质: NPU锁频 + Hi-Fi WCD938X + DMA 2048
           echo -e "CONFIG_MSM_CAMERA=y\nCONFIG_MSM_NPU=y\nCONFIG_MSM_NPU_KEEP_ALIVE=y" >> $VND_CFG
           echo -e "CONFIG_SND_SOC_WCD938X=y\nCONFIG_SND_SOC_WCD938X_MBHC=y" >> $VND_CFG
           find msm-kernel/sound -name "pcm_native.c" -exec sed -i 's/prealloc_max = 512/prealloc_max = 2048/g' {} 2>/dev/null || true
 
-          # 内存与存储 (MGLRU, UFS HPB)
+          # 内存存储: MGLRU + ZSTD + UFS HPB
           echo -e "CONFIG_LRU_GEN=y\nCONFIG_LRU_GEN_ENABLED=y\nCONFIG_ZRAM_DEF_COMP_ZSTD=y\nCONFIG_SCSI_UFS_HPB=y" >> $GKI_CFG
 
-          # ABI 爆破与日志封杀
+          # ABI 与 日志
           find build -name "*.bzl" -exec sed -i 's/abi_definition =/abi_definition = None #/g' {} +
           find build -name "*.bzl" -exec sed -i 's/kmi_symbol_list =/kmi_symbol_list = None #/g' {} +
           echo -e "CONFIG_SLUB_DEBUG=n\nCONFIG_DEBUG_KERNEL=n\nCONFIG_SCHED_DEBUG=n" >> $GKI_CFG
@@ -86,19 +86,20 @@ jobs:
           cd kernel_workspace/kernel_platform
           export LTO=thin
           export SKIP_ABI_CHECK=true
-          # 确保环境变量也包含这些路径
-          export PATH=$(pwd)/tools:$(pwd)/../tools:/usr/local/bin:$PATH
+          # 设置环境变量，优先查找我们准备好的 tools 目录
+          export PATH=$(pwd)/tools:$(pwd)/../tools:$PATH
           python3 build_with_bazel.py -t pineapple gki --jobs $(nproc) --skip_abi_check --noshow_progress
 
       - name: 📦 [5] 封包产物
+          # (保持封包逻辑一致)
         run: |
           IMG=$(find kernel_workspace/out -name "Image" -type f | head -n 1)
           git clone https://github.com/osm0sis/AnyKernel3.git
           cp "$IMG" ./AnyKernel3/
-          cd AnyKernel3 && zip -r9 ../Ultimate_OP_PadPro_V9.zip ./*
+          cd AnyKernel3 && zip -r9 ../Ultimate_OP_PadPro_V10.zip ./*
 
       - name: 📤 [6] 发布
         uses: actions/upload-artifact@v4
         with:
-          name: OnePlus-PadPro-Ultimate-V9
+          name: OnePlus-PadPro-Ultimate-V10
           path: ./*.zip
